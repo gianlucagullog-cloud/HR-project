@@ -60,7 +60,7 @@ const refs = {
   metricTemplate: document.getElementById("metricCardTemplate")
 };
 
-const supabase = createSupabaseClient();
+const supabaseClient = createSupabaseClient();
 
 initialize();
 
@@ -68,7 +68,7 @@ async function initialize() {
   hydratePeriodInputs();
   bindEvents();
 
-  if (!supabase) {
+  if (!supabaseClient) {
     refs.authStatus.textContent =
       "Configurazione mancante: inserisci SUPABASE_URL e SUPABASE_ANON_KEY in app.js.";
     return;
@@ -76,7 +76,7 @@ async function initialize() {
 
   refs.configBanner.classList.add("hidden");
 
-  const { data, error } = await supabase.auth.getSession();
+  const { data, error } = await supabaseClient.auth.getSession();
   if (error) {
     refs.authStatus.textContent = `Errore sessione: ${error.message}`;
     return;
@@ -84,7 +84,7 @@ async function initialize() {
 
   await handleSession(data.session);
 
-  supabase.auth.onAuthStateChange(async (_event, session) => {
+  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     await handleSession(session);
   });
 }
@@ -143,11 +143,11 @@ function bindEvents() {
 async function handleLogin(event) {
   event.preventDefault();
 
-  if (!supabase) return;
+  if (!supabaseClient) return;
 
   refs.authStatus.textContent = "Accesso in corso...";
 
-  const { error } = await supabase.auth.signInWithPassword({
+  const { error } = await supabaseClient.auth.signInWithPassword({
     email: refs.authEmail.value.trim(),
     password: refs.authPassword.value
   });
@@ -156,9 +156,9 @@ async function handleLogin(event) {
 }
 
 async function handleLogout() {
-  if (!supabase) return;
+  if (!supabaseClient) return;
 
-  await supabase.auth.signOut();
+  await supabaseClient.auth.signOut();
   refs.authPassword.value = "";
   refs.authStatus.textContent = "Logout eseguito.";
 }
@@ -214,7 +214,7 @@ async function handleSession(session) {
 }
 
 async function loadProfile(userId) {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseClient
     .from("profiles")
     .select("id, full_name, email, role, annual_quota")
     .eq("id", userId)
@@ -264,14 +264,14 @@ async function refreshData() {
 }
 
 async function fetchProfiles() {
-  return supabase
+  return supabaseClient
     .from("profiles")
     .select("id, full_name, email, role, annual_quota")
     .order("full_name", { ascending: true });
 }
 
 async function fetchRequests() {
-  return supabase
+  return supabaseClient
     .from("leave_requests")
     .select("id, employee_id, type, start_date, end_date, working_days, status, notes, created_at")
     .order("created_at", { ascending: false });
@@ -486,7 +486,7 @@ function emptyStateMarkup(text) {
 }
 
 async function updateRequestStatus(requestId, status) {
-  const { error } = await supabase
+  const { error } = await supabaseClient
     .from("leave_requests")
     .update({ status })
     .eq("id", requestId);
@@ -515,7 +515,7 @@ async function submitRequest() {
 
   refs.requestStatus.textContent = "Invio richiesta...";
 
-  const { error } = await supabase.from("leave_requests").insert({
+  const { error } = await supabaseClient.from("leave_requests").insert({
     employee_id: employeeId,
     type: refs.leaveType.value,
     start_date: startDate,
