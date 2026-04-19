@@ -32,6 +32,8 @@ const refs = {
   sideSessionRole: document.getElementById("sideSessionRole"),
   summaryIdentity: document.getElementById("summaryIdentity"),
   navButtons: [...document.querySelectorAll(".nav-item")],
+  primaryTabs: [...document.querySelectorAll(".tab-primary")],
+  secondaryTabs: [...document.querySelectorAll(".tab-secondary")],
   shortcutViewButtons: [...document.querySelectorAll("[data-view-target].assist-button")],
   panels: [...document.querySelectorAll(".view-panel")],
   employeeSelect: document.getElementById("employeeSelect"),
@@ -111,6 +113,43 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.viewTarget;
       syncViewUI();
+    });
+  });
+
+  refs.primaryTabs.forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.exportTrigger) {
+        exportCsv();
+        return;
+      }
+
+      if (button.dataset.viewTarget) {
+        state.activeView = button.dataset.viewTarget;
+        syncViewUI();
+      }
+    });
+  });
+
+  refs.secondaryTabs.forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.periodPreset) {
+        refs.periodPreset.value = button.dataset.periodPreset;
+
+        if (button.dataset.periodPreset === "custom") {
+          state.periodPreset = "custom";
+          refs.periodStart.focus();
+          syncPeriodTabs();
+          return;
+        }
+
+        handlePresetChange();
+        return;
+      }
+
+      if (button.dataset.viewTarget) {
+        state.activeView = button.dataset.viewTarget;
+        syncViewUI();
+      }
     });
   });
 
@@ -318,6 +357,7 @@ function handlePresetChange() {
 
   refs.periodStart.value = state.periodStart;
   refs.periodEnd.value = state.periodEnd;
+  syncPeriodTabs();
   render();
 }
 
@@ -326,6 +366,7 @@ function handleCustomPeriodChange() {
   state.periodStart = refs.periodStart.value;
   state.periodEnd = refs.periodEnd.value;
   refs.periodPreset.value = "custom";
+  syncPeriodTabs();
   render();
 }
 
@@ -369,8 +410,25 @@ function syncViewUI() {
     button.classList.toggle("is-active", button.dataset.viewTarget === state.activeView);
   });
 
+  refs.primaryTabs.forEach((button) => {
+    if (!button.dataset.viewTarget) return;
+    button.classList.toggle("is-active", button.dataset.viewTarget === state.activeView);
+  });
+
+  refs.secondaryTabs.forEach((button) => {
+    if (!button.dataset.viewTarget) return;
+    button.classList.toggle("is-active", button.dataset.viewTarget === state.activeView);
+  });
+
   refs.panels.forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.view === state.activeView);
+  });
+}
+
+function syncPeriodTabs() {
+  refs.secondaryTabs.forEach((button) => {
+    if (!button.dataset.periodPreset) return;
+    button.classList.toggle("is-active", button.dataset.periodPreset === state.periodPreset);
   });
 }
 

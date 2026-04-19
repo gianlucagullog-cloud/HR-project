@@ -36,20 +36,20 @@
 
         <div class="main-nav-wrap">
           <nav class="main-nav" aria-label="Navigazione primaria">
-            <button class="tab-primary is-active" type="button">Dashboard HR</button>
-            <button class="tab-primary" type="button">Richieste</button>
-            <button class="tab-primary" type="button">Approvazioni</button>
-            <button class="tab-primary" type="button">Storico</button>
-            <button class="tab-primary" type="button">Team</button>
-            <button class="tab-primary" type="button">Export</button>
+            <button class="tab-primary is-active admin-only" data-view-target="dashboard" type="button">Dashboard HR</button>
+            <button class="tab-primary employee-only" data-view-target="request" type="button">Richieste</button>
+            <button class="tab-primary admin-only" data-view-target="approvals" type="button">Approvazioni</button>
+            <button class="tab-primary" data-view-target="history" type="button">Storico</button>
+            <button class="tab-primary admin-only" data-view-target="team" type="button">Team</button>
+            <button class="tab-primary" data-export-trigger="true" type="button">Export</button>
           </nav>
           <nav class="sub-nav" aria-label="Navigazione secondaria">
-            <button class="tab-secondary is-active" type="button">Anno corrente</button>
-            <button class="tab-secondary" type="button">Ultimi 12 mesi</button>
-            <button class="tab-secondary" type="button">Custom range</button>
-            <button class="tab-secondary" type="button">Dipendenti</button>
-            <button class="tab-secondary" type="button">Manager</button>
-            <button class="tab-secondary" type="button">Calendario ferie</button>
+            <button class="tab-secondary is-active" data-period-preset="currentYear" type="button">Anno corrente</button>
+            <button class="tab-secondary" data-period-preset="last12Months" type="button">Ultimi 12 mesi</button>
+            <button class="tab-secondary" data-period-preset="custom" type="button">Custom range</button>
+            <button class="tab-secondary employee-only" data-view-target="request" type="button">Dipendenti</button>
+            <button class="tab-secondary admin-only" data-view-target="approvals" type="button">Manager</button>
+            <button class="tab-secondary" data-view-target="history" type="button">Calendario ferie</button>
           </nav>
         </div>
       </header>
