@@ -37,6 +37,10 @@ body {
   padding-bottom: 90px;
 }
 
+.hidden {
+  display: none !important;
+}
+
 button,
 input,
 select,
@@ -96,6 +100,24 @@ h4,
   display: grid;
   justify-items: end;
   gap: 10px;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-chip {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 4px;
+  background: #314565;
+  color: #e4ecf9;
+  font-weight: 500;
 }
 
 .utility-note {
@@ -295,6 +317,39 @@ h4,
 
 .summary-card {
   padding: 16px;
+}
+
+.auth-screen {
+  padding: 20px;
+}
+
+.auth-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.auth-form .primary-button {
+  align-self: end;
+}
+
+.config-banner,
+.status-message {
+  border-radius: 4px;
+  padding: 12px 14px;
+}
+
+.config-banner {
+  margin-top: 14px;
+  background: rgba(255, 194, 74, 0.14);
+  color: #ffe29c;
+}
+
+.status-message {
+  margin-top: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #d9e5f8;
 }
 
 .summary-list {
@@ -749,6 +804,7 @@ body.role-employee .admin-only {
   .dashboard-grid,
   .hero-card,
   .summary-band,
+  .auth-form,
   .period-panel,
   .filters-grid,
   .request-form {

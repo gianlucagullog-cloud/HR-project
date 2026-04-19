@@ -22,292 +22,319 @@
               <span class="brand-badge">BET</span>
             </div>
           </div>
-          <div class="utility-center">Nascondi Header</div>
+          <div class="utility-center">Leave Management Portal</div>
           <div class="utility-right">
-            <div class="utility-note">
-              Demo HR leave management con interfaccia brandizzata Marathonbet.
+            <div class="utility-note" id="sessionMessage">
+              Collega Supabase e accedi con email e password.
             </div>
-            <div class="login-cluster">
-              <div class="fake-input">HR Manager</div>
-              <div class="fake-input">Team Lead</div>
-              <button class="header-button dark">ACCEDI</button>
-              <button class="header-button green">NUOVA RICHIESTA</button>
+            <div class="session-actions">
+              <div class="user-chip" id="userChip">Non connesso</div>
+              <button class="header-button dark hidden" id="logoutButton" type="button">ESCI</button>
             </div>
           </div>
         </div>
 
         <div class="main-nav-wrap">
           <nav class="main-nav" aria-label="Navigazione primaria">
-            <button class="tab-primary is-active">Dashboard HR</button>
-            <button class="tab-primary">Richieste</button>
-            <button class="tab-primary">Approvazioni</button>
-            <button class="tab-primary">Storico</button>
-            <button class="tab-primary">Team</button>
-            <button class="tab-primary">Export</button>
+            <button class="tab-primary is-active" type="button">Dashboard HR</button>
+            <button class="tab-primary" type="button">Richieste</button>
+            <button class="tab-primary" type="button">Approvazioni</button>
+            <button class="tab-primary" type="button">Storico</button>
+            <button class="tab-primary" type="button">Team</button>
+            <button class="tab-primary" type="button">Export</button>
           </nav>
           <nav class="sub-nav" aria-label="Navigazione secondaria">
-            <button class="tab-secondary is-active">Anno corrente</button>
-            <button class="tab-secondary">Ultimi 12 mesi</button>
-            <button class="tab-secondary">Custom range</button>
-            <button class="tab-secondary">Dipendenti</button>
-            <button class="tab-secondary">Manager</button>
-            <button class="tab-secondary">Calendario ferie</button>
+            <button class="tab-secondary is-active" type="button">Anno corrente</button>
+            <button class="tab-secondary" type="button">Ultimi 12 mesi</button>
+            <button class="tab-secondary" type="button">Custom range</button>
+            <button class="tab-secondary" type="button">Dipendenti</button>
+            <button class="tab-secondary" type="button">Manager</button>
+            <button class="tab-secondary" type="button">Calendario ferie</button>
           </nav>
         </div>
       </header>
 
       <main class="dashboard-layout">
         <section class="main-stage">
-          <div class="board-header">
-            <div>
-              <p class="board-kicker">HR control center</p>
-              <h1>Marathonbet Leave Control</h1>
-            </div>
-            <button class="mini-chip">Dashboard HR</button>
-          </div>
-
-          <div class="league-strip">Leave management overview</div>
-
-          <div class="event-strip">
-            <div>
-              <h2>Richieste in tempo reale</h2>
-              <p>Ferie, approvazioni e quota residua team aggiornate nello stesso pannello.</p>
-            </div>
-            <div class="live-pill">HR Dashboard</div>
-          </div>
-
-          <section class="hero-card">
-            <div>
-              <p class="eyebrow">Periodo analisi</p>
-              <h3>Vista statistica personalizzabile</h3>
-              <p>
-                Cambia il periodo per osservare giorni approvati, richieste pendenti e
-                quota ferie utilizzata dal team.
-              </p>
+          <section class="auth-screen card" id="authScreen">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Accesso</p>
+                <h3>Entra con il tuo account aziendale</h3>
+              </div>
             </div>
 
-            <div class="period-panel">
+            <p class="meta-line">
+              Prima di usare il portale, inserisci in [app.js](/Users/gianl/Documents/Codex/2026-04-19-ho-creato-una-dashboard-su-github/app.js)
+              il tuo `SUPABASE_URL` e la tua `SUPABASE_ANON_KEY`.
+            </p>
+
+            <div class="config-banner" id="configBanner">
+              Configurazione Supabase mancante: apri `app.js` e sostituisci i placeholder con i
+              dati del tuo progetto.
+            </div>
+
+            <form class="auth-form" id="authForm">
               <label>
-                <span>Range rapido</span>
-                <select id="periodPreset">
-                  <option value="currentYear">Anno corrente</option>
-                  <option value="last12Months">Ultimi 12 mesi</option>
-                  <option value="custom">Custom</option>
-                </select>
+                <span>Email</span>
+                <input type="email" id="authEmail" placeholder="nome@azienda.com" required />
               </label>
               <label>
-                <span>Dal</span>
-                <input type="date" id="periodStart" />
+                <span>Password</span>
+                <input type="password" id="authPassword" placeholder="Password" required />
               </label>
-              <label>
-                <span>Al</span>
-                <input type="date" id="periodEnd" />
-              </label>
-            </div>
+              <button class="primary-button" type="submit">Accedi</button>
+            </form>
+
+            <p class="status-message" id="authStatus"></p>
           </section>
 
-          <section class="summary-band">
-            <article class="summary-card">
-              <p class="eyebrow">Reparti</p>
-              <div class="summary-list">
-                <span>Sales 14</span>
-                <span>Operations 21</span>
-                <span>Finance 8</span>
-                <span>People 5</span>
+          <section class="app-content hidden" id="appContent">
+            <div class="board-header">
+              <div>
+                <p class="board-kicker">HR control center</p>
+                <h1>Marathonbet Leave Control</h1>
               </div>
-            </article>
-            <article class="summary-card">
-              <p class="eyebrow">Azioni rapide</p>
-              <div class="summary-list">
-                <span>Nuova richiesta</span>
-                <span>Approva pendenti</span>
-                <span>Export CSV</span>
-                <span>Storico filtrato</span>
+              <button class="mini-chip" id="roleChip" type="button">Dashboard HR</button>
+            </div>
+
+            <div class="league-strip">Leave management overview</div>
+
+            <div class="event-strip">
+              <div>
+                <h2>Richieste in tempo reale</h2>
+                <p>Ferie, approvazioni e quota residua team aggiornate nello stesso pannello.</p>
               </div>
-            </article>
+              <div class="live-pill" id="welcomePill">Utente connesso</div>
+            </div>
+
+            <section class="hero-card">
+              <div>
+                <p class="eyebrow">Periodo analisi</p>
+                <h3>Vista statistica personalizzabile</h3>
+                <p>
+                  Cambia il periodo per osservare giorni approvati, richieste pendenti e quota ferie
+                  utilizzata dal team.
+                </p>
+              </div>
+
+              <div class="period-panel">
+                <label>
+                  <span>Range rapido</span>
+                  <select id="periodPreset">
+                    <option value="currentYear">Anno corrente</option>
+                    <option value="last12Months">Ultimi 12 mesi</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Dal</span>
+                  <input type="date" id="periodStart" />
+                </label>
+                <label>
+                  <span>Al</span>
+                  <input type="date" id="periodEnd" />
+                </label>
+              </div>
+            </section>
+
+            <section class="summary-band">
+              <article class="summary-card">
+                <p class="eyebrow">Sessione</p>
+                <div class="summary-list" id="summaryIdentity">
+                  <span>Utente: -</span>
+                  <span>Ruolo: -</span>
+                </div>
+              </article>
+              <article class="summary-card">
+                <p class="eyebrow">Azioni rapide</p>
+                <div class="summary-list">
+                  <span>Nuova richiesta</span>
+                  <span>Approva pendenti</span>
+                  <span>Export CSV</span>
+                  <span>Storico filtrato</span>
+                </div>
+              </article>
+            </section>
+
+            <div class="market-tabs">
+              <button class="nav-item is-active admin-only" data-view-target="dashboard" type="button">Dashboard</button>
+              <button class="nav-item employee-only" data-view-target="request" type="button">Richiesta</button>
+              <button class="nav-item admin-only" data-view-target="approvals" type="button">Pendenti</button>
+              <button class="nav-item" data-view-target="history" type="button">Storico</button>
+              <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
+            </div>
+
+            <div class="content">
+              <section class="panel view-panel is-active admin-only" data-view="dashboard">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Admin dashboard</p>
+                    <h3>Metriche chiave</h3>
+                  </div>
+                </div>
+
+                <div class="metrics-grid" id="metricsGrid"></div>
+
+                <div class="dashboard-grid">
+                  <article class="card">
+                    <div class="card-head">
+                      <div>
+                        <p class="eyebrow">Pending feed</p>
+                        <h4>Richieste pendenti</h4>
+                      </div>
+                    </div>
+                    <div id="pendingList" class="stack-list"></div>
+                  </article>
+
+                  <article class="card">
+                    <div class="card-head">
+                      <div>
+                        <p class="eyebrow">Quota tracker</p>
+                        <h4>Utilizzo quote</h4>
+                      </div>
+                    </div>
+                    <div id="teamSummary" class="team-summary"></div>
+                  </article>
+                </div>
+              </section>
+
+              <section class="panel view-panel employee-only" data-view="request">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Dipendente</p>
+                    <h3>Nuova richiesta ferie</h3>
+                  </div>
+                </div>
+
+                <article class="card">
+                  <form id="requestForm" class="request-form">
+                    <label>
+                      <span>Dipendente</span>
+                      <select id="employeeSelect"></select>
+                    </label>
+                    <label>
+                      <span>Tipo</span>
+                      <select id="leaveType">
+                        <option value="Ferie">Ferie</option>
+                        <option value="Permesso">Permesso</option>
+                        <option value="Malattia">Malattia</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Data inizio</span>
+                      <input type="date" id="startDate" required />
+                    </label>
+                    <label>
+                      <span>Data fine</span>
+                      <input type="date" id="endDate" required />
+                    </label>
+                    <label class="full-width">
+                      <span>Note</span>
+                      <textarea
+                        id="requestNotes"
+                        rows="4"
+                        placeholder="Motivo o contesto della richiesta"
+                      ></textarea>
+                    </label>
+
+                    <div class="info-banner full-width" id="workingDaysInfo">
+                      Seleziona un intervallo per calcolare i giorni lavorativi.
+                    </div>
+
+                    <p class="status-message full-width" id="requestStatus"></p>
+                    <button type="submit" class="primary-button">Invia richiesta</button>
+                  </form>
+                </article>
+              </section>
+
+              <section class="panel view-panel admin-only" data-view="approvals">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Admin</p>
+                    <h3>Approva o rifiuta</h3>
+                  </div>
+                </div>
+
+                <article class="card">
+                  <div id="approvalQueue" class="stack-list"></div>
+                </article>
+              </section>
+
+              <section class="panel view-panel" data-view="history">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Storico</p>
+                    <h3>Richieste con filtri</h3>
+                  </div>
+                  <button id="exportCsvButton" class="secondary-button" type="button">Export CSV</button>
+                </div>
+
+                <article class="card">
+                  <div class="filters-grid">
+                    <label>
+                      <span>Stato</span>
+                      <select id="filterStatus">
+                        <option value="all">Tutti</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Approved">Approved</option>
+                        <option value="Rejected">Rejected</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Dipendente</span>
+                      <select id="filterEmployee">
+                        <option value="all">Tutti</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Dal</span>
+                      <input type="date" id="historyStart" />
+                    </label>
+                    <label>
+                      <span>Al</span>
+                      <input type="date" id="historyEnd" />
+                    </label>
+                  </div>
+
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Dipendente</th>
+                          <th>Tipo</th>
+                          <th>Periodo</th>
+                          <th>Giorni</th>
+                          <th>Stato</th>
+                          <th>Creata</th>
+                        </tr>
+                      </thead>
+                      <tbody id="historyTableBody"></tbody>
+                    </table>
+                  </div>
+                </article>
+              </section>
+
+              <section class="panel view-panel admin-only" data-view="team">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Team</p>
+                    <h3>Quote annuali e utilizzo</h3>
+                  </div>
+                </div>
+
+                <article class="card">
+                  <div id="teamTable" class="team-table"></div>
+                </article>
+              </section>
+            </div>
           </section>
-
-          <div class="market-tabs">
-            <button class="nav-item is-active admin-only" data-view-target="dashboard">Dashboard</button>
-            <button class="nav-item employee-only" data-view-target="request">Richiesta</button>
-            <button class="nav-item admin-only" data-view-target="approvals">Pendenti</button>
-            <button class="nav-item" data-view-target="history">Storico</button>
-            <button class="nav-item admin-only" data-view-target="team">Team</button>
-          </div>
-
-          <div class="content">
-            <section class="panel view-panel is-active admin-only" data-view="dashboard">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Admin dashboard</p>
-                  <h3>Metriche chiave</h3>
-                </div>
-              </div>
-
-              <div class="metrics-grid" id="metricsGrid"></div>
-
-              <div class="dashboard-grid">
-                <article class="card">
-                  <div class="card-head">
-                    <div>
-                      <p class="eyebrow">Pending feed</p>
-                      <h4>Richieste pendenti</h4>
-                    </div>
-                  </div>
-                  <div id="pendingList" class="stack-list"></div>
-                </article>
-
-                <article class="card">
-                  <div class="card-head">
-                    <div>
-                      <p class="eyebrow">Quota tracker</p>
-                      <h4>Utilizzo quote</h4>
-                    </div>
-                  </div>
-                  <div id="teamSummary" class="team-summary"></div>
-                </article>
-              </div>
-            </section>
-
-            <section class="panel view-panel employee-only" data-view="request">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Dipendente</p>
-                  <h3>Nuova richiesta ferie</h3>
-                </div>
-              </div>
-
-              <article class="card">
-                <form id="requestForm" class="request-form">
-                  <label>
-                    <span>Dipendente</span>
-                    <select id="employeeSelect"></select>
-                  </label>
-                  <label>
-                    <span>Tipo</span>
-                    <select id="leaveType">
-                      <option value="Ferie">Ferie</option>
-                      <option value="Permesso">Permesso</option>
-                      <option value="Malattia">Malattia</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Data inizio</span>
-                    <input type="date" id="startDate" required />
-                  </label>
-                  <label>
-                    <span>Data fine</span>
-                    <input type="date" id="endDate" required />
-                  </label>
-                  <label class="full-width">
-                    <span>Note</span>
-                    <textarea
-                      id="requestNotes"
-                      rows="4"
-                      placeholder="Motivo o contesto della richiesta"
-                    ></textarea>
-                  </label>
-
-                  <div class="info-banner full-width" id="workingDaysInfo">
-                    Seleziona un intervallo per calcolare i giorni lavorativi.
-                  </div>
-
-                  <button type="submit" class="primary-button">Invia richiesta</button>
-                </form>
-              </article>
-            </section>
-
-            <section class="panel view-panel admin-only" data-view="approvals">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Admin</p>
-                  <h3>Approva o rifiuta</h3>
-                </div>
-              </div>
-
-              <article class="card">
-                <div id="approvalQueue" class="stack-list"></div>
-              </article>
-            </section>
-
-            <section class="panel view-panel" data-view="history">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Storico</p>
-                  <h3>Richieste con filtri</h3>
-                </div>
-                <button id="exportCsvButton" class="secondary-button">Export CSV</button>
-              </div>
-
-              <article class="card">
-                <div class="filters-grid">
-                  <label>
-                    <span>Stato</span>
-                    <select id="filterStatus">
-                      <option value="all">Tutti</option>
-                      <option value="Pending">Pending</option>
-                      <option value="Approved">Approved</option>
-                      <option value="Rejected">Rejected</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Dipendente</span>
-                    <select id="filterEmployee">
-                      <option value="all">Tutti</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Dal</span>
-                    <input type="date" id="historyStart" />
-                  </label>
-                  <label>
-                    <span>Al</span>
-                    <input type="date" id="historyEnd" />
-                  </label>
-                </div>
-
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Dipendente</th>
-                        <th>Tipo</th>
-                        <th>Periodo</th>
-                        <th>Giorni</th>
-                        <th>Stato</th>
-                        <th>Creata</th>
-                      </tr>
-                    </thead>
-                    <tbody id="historyTableBody"></tbody>
-                  </table>
-                </div>
-              </article>
-            </section>
-
-            <section class="panel view-panel admin-only" data-view="team">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Team</p>
-                  <h3>Quote annuali e utilizzo</h3>
-                </div>
-              </div>
-
-              <article class="card">
-                <div id="teamTable" class="team-table"></div>
-              </article>
-            </section>
-          </div>
         </section>
 
         <aside class="side-panel">
           <div class="ticket-header">
-            <div class="ticket-title">Pannello manager</div>
-            <div class="ticket-controls">Filtri e demo</div>
-          </div>
-
-          <div class="role-toggle" aria-label="Selettore ruolo demo">
-            <button class="role-button is-active" data-role="employee">Dipendente</button>
-            <button class="role-button" data-role="admin">Admin</button>
+            <div class="ticket-title">Pannello sessione</div>
+            <div class="ticket-controls" id="sideSessionRole">Ruolo: non connesso</div>
           </div>
 
           <div class="right-panel-section">
@@ -319,21 +346,21 @@
             <div class="section-mini-title">Accesso rapido</div>
             <div class="mini-form-card">
               <p>
-                Usa il tab <strong>Richiesta</strong> per inviare ferie con conteggio
-                automatico dei giorni lavorativi.
+                Usa il tab <strong>Richiesta</strong> per inviare ferie con conteggio automatico dei
+                giorni lavorativi.
               </p>
-              <button class="assist-button" data-view-target="request">Apri richiesta</button>
+              <button class="assist-button" data-view-target="request" type="button">Apri richiesta</button>
             </div>
           </div>
         </aside>
       </main>
 
       <nav class="bottom-nav" aria-label="Navigazione principale">
-        <button class="nav-item is-active admin-only" data-view-target="dashboard">Dashboard</button>
-        <button class="nav-item employee-only" data-view-target="request">Richiesta</button>
-        <button class="nav-item admin-only" data-view-target="approvals">Pendenti</button>
-        <button class="nav-item" data-view-target="history">Storico</button>
-        <button class="nav-item admin-only" data-view-target="team">Team</button>
+        <button class="nav-item is-active admin-only" data-view-target="dashboard" type="button">Dashboard</button>
+        <button class="nav-item employee-only" data-view-target="request" type="button">Richiesta</button>
+        <button class="nav-item admin-only" data-view-target="approvals" type="button">Pendenti</button>
+        <button class="nav-item" data-view-target="history" type="button">Storico</button>
+        <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
       </nav>
     </div>
 
@@ -345,6 +372,7 @@
       </article>
     </template>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
   </body>
 </html>

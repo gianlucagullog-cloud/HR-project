@@ -1,67 +1,36 @@
-const STORAGE_KEY = "leaveflow-demo-state-v1";
-
-const seedState = {
-  role: "employee",
-  activeView: "dashboard",
-  employees: [
-    { id: "emp-1", name: "Giulia Caruana", team: "Sales", annualQuota: 26 },
-    { id: "emp-2", name: "Luca Grech", team: "Operations", annualQuota: 24 },
-    { id: "emp-3", name: "Marta Vella", team: "Finance", annualQuota: 28 },
-    { id: "emp-4", name: "Nadia Borg", team: "People", annualQuota: 30 }
-  ],
-  requests: [
-    {
-      id: "req-1",
-      employeeId: "emp-1",
-      type: "Ferie",
-      startDate: "2026-04-28",
-      endDate: "2026-05-02",
-      workingDays: 4,
-      status: "Pending",
-      notes: "Weekend lungo in famiglia",
-      createdAt: "2026-04-16"
-    },
-    {
-      id: "req-2",
-      employeeId: "emp-2",
-      type: "Ferie",
-      startDate: "2026-03-10",
-      endDate: "2026-03-13",
-      workingDays: 4,
-      status: "Approved",
-      notes: "Viaggio prenotato",
-      createdAt: "2026-02-22"
-    },
-    {
-      id: "req-3",
-      employeeId: "emp-3",
-      type: "Permesso",
-      startDate: "2026-02-03",
-      endDate: "2026-02-03",
-      workingDays: 1,
-      status: "Rejected",
-      notes: "Impegno personale",
-      createdAt: "2026-02-01"
-    },
-    {
-      id: "req-4",
-      employeeId: "emp-4",
-      type: "Ferie",
-      startDate: "2026-01-15",
-      endDate: "2026-01-23",
-      workingDays: 7,
-      status: "Approved",
-      notes: "Vacanza invernale",
-      createdAt: "2025-12-18"
-    }
-  ]
+const SUPABASE_CONFIG = {
+  url: "https://dnyoefjtbkjqtyvitiif.supabase.co",
+  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRueW9lZmp0YmtqcXR5dml0aWlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1ODM4NjUsImV4cCI6MjA5MjE1OTg2NX0.rWX1-cD8BRv5wt6_BdB--GQ1d1OkVHw87STLnXRTL0I"
 };
 
-let state = loadState();
+const state = {
+  activeView: "history",
+  periodPreset: "currentYear",
+  periodStart: "",
+  periodEnd: "",
+  session: null,
+  profile: null,
+  employees: [],
+  requests: [],
+  historyRows: []
+};
 
 const refs = {
   body: document.body,
-  roleButtons: [...document.querySelectorAll(".role-button")],
+  authScreen: document.getElementById("authScreen"),
+  appContent: document.getElementById("appContent"),
+  authForm: document.getElementById("authForm"),
+  authEmail: document.getElementById("authEmail"),
+  authPassword: document.getElementById("authPassword"),
+  authStatus: document.getElementById("authStatus"),
+  configBanner: document.getElementById("configBanner"),
+  logoutButton: document.getElementById("logoutButton"),
+  sessionMessage: document.getElementById("sessionMessage"),
+  userChip: document.getElementById("userChip"),
+  roleChip: document.getElementById("roleChip"),
+  welcomePill: document.getElementById("welcomePill"),
+  sideSessionRole: document.getElementById("sideSessionRole"),
+  summaryIdentity: document.getElementById("summaryIdentity"),
   navButtons: [...document.querySelectorAll(".nav-item")],
   shortcutViewButtons: [...document.querySelectorAll("[data-view-target].assist-button")],
   panels: [...document.querySelectorAll(".view-panel")],
@@ -71,6 +40,7 @@ const refs = {
   endDate: document.getElementById("endDate"),
   requestNotes: document.getElementById("requestNotes"),
   requestForm: document.getElementById("requestForm"),
+  requestStatus: document.getElementById("requestStatus"),
   workingDaysInfo: document.getElementById("workingDaysInfo"),
   metricsGrid: document.getElementById("metricsGrid"),
   pendingList: document.getElementById("pendingList"),
@@ -90,32 +60,56 @@ const refs = {
   metricTemplate: document.getElementById("metricCardTemplate")
 };
 
+const supabase = createSupabaseClient();
+
 initialize();
 
-function initialize() {
+async function initialize() {
   hydratePeriodInputs();
   bindEvents();
-  populateEmployeeOptions();
-  syncRoleUI();
-  syncViewUI();
-  render();
+
+  if (!supabase) {
+    refs.authStatus.textContent =
+      "Configurazione mancante: inserisci SUPABASE_URL e SUPABASE_ANON_KEY in app.js.";
+    return;
+  }
+
+  refs.configBanner.classList.add("hidden");
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    refs.authStatus.textContent = `Errore sessione: ${error.message}`;
+    return;
+  }
+
+  await handleSession(data.session);
+
+  supabase.auth.onAuthStateChange(async (_event, session) => {
+    await handleSession(session);
+  });
+}
+
+function createSupabaseClient() {
+  const isConfigured =
+    SUPABASE_CONFIG.url &&
+    SUPABASE_CONFIG.anonKey &&
+    !SUPABASE_CONFIG.url.includes("YOUR_SUPABASE_URL") &&
+    !SUPABASE_CONFIG.anonKey.includes("YOUR_SUPABASE_ANON_KEY");
+
+  if (!isConfigured || !window.supabase?.createClient) {
+    return null;
+  }
+
+  return window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
 }
 
 function bindEvents() {
-  refs.roleButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.role = button.dataset.role;
-      state.activeView = state.role === "admin" ? "dashboard" : "request";
-      saveState();
-      syncRoleUI();
-      syncViewUI();
-    });
-  });
+  refs.authForm.addEventListener("submit", handleLogin);
+  refs.logoutButton.addEventListener("click", handleLogout);
 
   refs.navButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.viewTarget;
-      saveState();
       syncViewUI();
     });
   });
@@ -123,7 +117,6 @@ function bindEvents() {
   refs.shortcutViewButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.viewTarget;
-      saveState();
       syncViewUI();
     });
   });
@@ -147,41 +140,163 @@ function bindEvents() {
   refs.periodEnd.addEventListener("input", handleCustomPeriodChange);
 }
 
-function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) {
-    return structuredClone(seedState);
-  }
+async function handleLogin(event) {
+  event.preventDefault();
 
-  try {
-    return { ...structuredClone(seedState), ...JSON.parse(saved) };
-  } catch {
-    return structuredClone(seedState);
-  }
+  if (!supabase) return;
+
+  refs.authStatus.textContent = "Accesso in corso...";
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email: refs.authEmail.value.trim(),
+    password: refs.authPassword.value
+  });
+
+  refs.authStatus.textContent = error ? `Accesso non riuscito: ${error.message}` : "";
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+async function handleLogout() {
+  if (!supabase) return;
+
+  await supabase.auth.signOut();
+  refs.authPassword.value = "";
+  refs.authStatus.textContent = "Logout eseguito.";
+}
+
+async function handleSession(session) {
+  state.session = session;
+
+  if (!session) {
+    state.profile = null;
+    state.employees = [];
+    state.requests = [];
+    refs.authScreen.classList.remove("hidden");
+    refs.appContent.classList.add("hidden");
+    refs.logoutButton.classList.add("hidden");
+    refs.userChip.textContent = "Non connesso";
+    refs.sessionMessage.textContent = "Collega Supabase e accedi con email e password.";
+    refs.sideSessionRole.textContent = "Ruolo: non connesso";
+    refs.summaryIdentity.innerHTML = "<span>Utente: -</span><span>Ruolo: -</span>";
+    refs.body.classList.remove("role-admin", "role-employee");
+    return;
+  }
+
+  const profile = await loadProfile(session.user.id);
+
+  if (!profile) {
+    refs.authScreen.classList.remove("hidden");
+    refs.appContent.classList.add("hidden");
+    refs.authStatus.textContent =
+      "Utente autenticato, ma profilo mancante in tabella profiles. Aggiungi il record in Supabase.";
+    return;
+  }
+
+  state.profile = normalizeProfile(profile);
+  state.activeView = state.profile.role === "admin" ? "dashboard" : "request";
+
+  refs.authScreen.classList.add("hidden");
+  refs.appContent.classList.remove("hidden");
+  refs.logoutButton.classList.remove("hidden");
+  refs.authStatus.textContent = "";
+  refs.userChip.textContent = state.profile.fullName;
+  refs.sessionMessage.textContent = state.profile.email;
+  refs.roleChip.textContent = state.profile.role === "admin" ? "Admin" : "Dipendente";
+  refs.welcomePill.textContent = state.profile.role === "admin" ? "HR Admin" : "Employee Portal";
+  refs.sideSessionRole.textContent = `Ruolo: ${state.profile.role}`;
+  refs.summaryIdentity.innerHTML = `
+    <span>Utente: ${state.profile.fullName}</span>
+    <span>Ruolo: ${state.profile.role}</span>
+  `;
+
+  syncRoleUI();
+  syncViewUI();
+  await refreshData();
+}
+
+async function loadProfile(userId) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, role, annual_quota")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    refs.authStatus.textContent = `Errore caricamento profilo: ${error.message}`;
+    return null;
+  }
+
+  return data;
+}
+
+function normalizeProfile(profile) {
+  return {
+    id: profile.id,
+    fullName: profile.full_name,
+    email: profile.email,
+    role: profile.role,
+    annualQuota: profile.annual_quota
+  };
+}
+
+async function refreshData() {
+  if (!state.profile) return;
+
+  refs.requestStatus.textContent = "";
+
+  const [profilesResult, requestsResult] = await Promise.all([fetchProfiles(), fetchRequests()]);
+
+  if (profilesResult.error) {
+    refs.requestStatus.textContent = `Errore profili: ${profilesResult.error.message}`;
+  } else {
+    state.employees = profilesResult.data.map(normalizeProfile);
+  }
+
+  if (requestsResult.error) {
+    refs.requestStatus.textContent = `Errore richieste: ${requestsResult.error.message}`;
+  } else {
+    state.requests = requestsResult.data.map(normalizeRequest);
+  }
+
+  populateEmployeeOptions();
+  syncRoleUI();
+  syncViewUI();
+  render();
+}
+
+async function fetchProfiles() {
+  return supabase
+    .from("profiles")
+    .select("id, full_name, email, role, annual_quota")
+    .order("full_name", { ascending: true });
+}
+
+async function fetchRequests() {
+  return supabase
+    .from("leave_requests")
+    .select("id, employee_id, type, start_date, end_date, working_days, status, notes, created_at")
+    .order("created_at", { ascending: false });
+}
+
+function normalizeRequest(request) {
+  return {
+    id: request.id,
+    employeeId: request.employee_id,
+    type: request.type,
+    startDate: request.start_date,
+    endDate: request.end_date,
+    workingDays: request.working_days,
+    status: request.status,
+    notes: request.notes || "",
+    createdAt: request.created_at
+  };
 }
 
 function hydratePeriodInputs() {
   const today = new Date();
-  const currentYearStart = new Date(today.getFullYear(), 0, 1);
-  const last12MonthsStart = new Date(today);
-  last12MonthsStart.setFullYear(today.getFullYear() - 1);
-  last12MonthsStart.setDate(last12MonthsStart.getDate() + 1);
-
-  if (!state.periodPreset) state.periodPreset = "currentYear";
-  if (!state.periodStart) state.periodStart = toISODate(currentYearStart);
-  if (!state.periodEnd) state.periodEnd = toISODate(today);
+  state.periodStart = `${today.getFullYear()}-01-01`;
+  state.periodEnd = toISODate(today);
 
   refs.periodPreset.value = state.periodPreset;
-
-  if (state.periodPreset === "last12Months") {
-    state.periodStart = toISODate(last12MonthsStart);
-    state.periodEnd = toISODate(today);
-  }
-
   refs.periodStart.value = state.periodStart;
   refs.periodEnd.value = state.periodEnd;
 }
@@ -203,7 +318,6 @@ function handlePresetChange() {
 
   refs.periodStart.value = state.periodStart;
   refs.periodEnd.value = state.periodEnd;
-  saveState();
   render();
 }
 
@@ -212,33 +326,42 @@ function handleCustomPeriodChange() {
   state.periodStart = refs.periodStart.value;
   state.periodEnd = refs.periodEnd.value;
   refs.periodPreset.value = "custom";
-  saveState();
   render();
 }
 
 function populateEmployeeOptions() {
-  const options = state.employees
-    .map((employee) => `<option value="${employee.id}">${employee.name}</option>`)
+  if (!state.profile) return;
+
+  const visibleEmployees =
+    state.profile.role === "admin"
+      ? state.employees
+      : state.employees.filter((employee) => employee.id === state.profile.id);
+
+  const options = visibleEmployees
+    .map((employee) => `<option value="${employee.id}">${employee.fullName}</option>`)
     .join("");
 
   refs.employeeSelect.innerHTML = options;
   refs.filterEmployee.innerHTML = `<option value="all">Tutti</option>${options}`;
+
+  if (state.profile.role !== "admin") {
+    refs.employeeSelect.value = state.profile.id;
+    refs.employeeSelect.disabled = true;
+  } else {
+    refs.employeeSelect.disabled = false;
+  }
 }
 
 function syncRoleUI() {
-  const allowedViews =
-    state.role === "admin" ? ["dashboard", "approvals", "history", "team"] : ["request", "history"];
-  if (!allowedViews.includes(state.activeView)) {
-    state.activeView = state.role === "admin" ? "dashboard" : "request";
-    saveState();
+  const role = state.profile?.role;
+  const allowedViews = role === "admin" ? ["dashboard", "approvals", "history", "team"] : ["request", "history"];
+
+  if (role && !allowedViews.includes(state.activeView)) {
+    state.activeView = role === "admin" ? "dashboard" : "request";
   }
 
-  refs.roleButtons.forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.role === state.role);
-  });
-
-  refs.body.classList.toggle("role-admin", state.role === "admin");
-  refs.body.classList.toggle("role-employee", state.role === "employee");
+  refs.body.classList.toggle("role-admin", role === "admin");
+  refs.body.classList.toggle("role-employee", role === "employee");
 }
 
 function syncViewUI() {
@@ -319,28 +442,29 @@ function renderPendingLists() {
     ? pending.map((request) => requestCardMarkup(request, true)).join("")
     : emptyStateMarkup("La coda approvazioni è vuota.");
 
-  if (refs.approvalQueueMirror) {
-    refs.approvalQueueMirror.innerHTML = pending.length
-      ? pending.slice(0, 4).map((request) => requestCardMarkup(request, false)).join("")
-      : emptyStateMarkup("Nessuna richiesta in coda.");
-  }
+  refs.approvalQueueMirror.innerHTML = pending.length
+    ? pending.slice(0, 4).map((request) => requestCardMarkup(request, false)).join("")
+    : emptyStateMarkup("Nessuna richiesta in coda.");
 
   refs.approvalQueue.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => {
-      updateRequestStatus(button.dataset.id, button.dataset.action);
+    button.addEventListener("click", async () => {
+      await updateRequestStatus(button.dataset.id, button.dataset.action);
     });
   });
 }
 
 function requestCardMarkup(request, withActions) {
   const employee = getEmployeeById(request.employeeId);
+  const employeeName = employee?.fullName || "Dipendente";
+  const employeeSubline = employee?.email || "";
+
   return `
     <article class="request-item">
       <div class="request-item-head">
         <div>
-          <h4>${employee.name}</h4>
+          <h4>${employeeName}</h4>
           <p class="meta-line">${request.type} · ${formatDate(request.startDate)} - ${formatDate(request.endDate)}</p>
-          <p class="meta-line">${request.workingDays} giorni lavorativi · ${employee.team}</p>
+          <p class="meta-line">${request.workingDays} giorni lavorativi${employeeSubline ? ` · ${employeeSubline}` : ""}</p>
         </div>
         <span class="badge ${request.status}">${request.status}</span>
       </div>
@@ -361,44 +485,56 @@ function emptyStateMarkup(text) {
   return `<p class="empty-state">${text}</p>`;
 }
 
-function updateRequestStatus(requestId, status) {
-  const request = state.requests.find((item) => item.id === requestId);
-  if (!request) return;
-  request.status = status;
-  saveState();
-  render();
+async function updateRequestStatus(requestId, status) {
+  const { error } = await supabase
+    .from("leave_requests")
+    .update({ status })
+    .eq("id", requestId);
+
+  if (error) {
+    refs.requestStatus.textContent = `Errore aggiornamento richiesta: ${error.message}`;
+    return;
+  }
+
+  await refreshData();
 }
 
-function submitRequest() {
-  const employeeId = refs.employeeSelect.value;
+async function submitRequest() {
+  if (!state.profile) return;
+
+  const employeeId = refs.employeeSelect.value || state.profile.id;
   const startDate = refs.startDate.value;
   const endDate = refs.endDate.value;
   const workingDays = countWorkingDays(startDate, endDate);
 
   if (!employeeId || !startDate || !endDate || workingDays <= 0) {
-    refs.workingDaysInfo.textContent = "Inserisci un intervallo valido con almeno un giorno lavorativo.";
+    refs.requestStatus.textContent =
+      "Inserisci un intervallo valido con almeno un giorno lavorativo.";
     return;
   }
 
-  state.requests.unshift({
-    id: `req-${generateId()}`,
-    employeeId,
+  refs.requestStatus.textContent = "Invio richiesta...";
+
+  const { error } = await supabase.from("leave_requests").insert({
+    employee_id: employeeId,
     type: refs.leaveType.value,
-    startDate,
-    endDate,
-    workingDays,
+    start_date: startDate,
+    end_date: endDate,
+    working_days: workingDays,
     status: "Pending",
-    notes: refs.requestNotes.value.trim(),
-    createdAt: toISODate(new Date())
+    notes: refs.requestNotes.value.trim()
   });
+
+  if (error) {
+    refs.requestStatus.textContent = `Invio non riuscito: ${error.message}`;
+    return;
+  }
 
   refs.requestForm.reset();
   refs.employeeSelect.value = employeeId;
-  refs.workingDaysInfo.textContent = `Richiesta inviata. Giorni lavorativi conteggiati: ${workingDays}.`;
-  state.activeView = "approvals";
-  saveState();
-  syncViewUI();
-  render();
+  refs.requestStatus.textContent = `Richiesta inviata. Giorni lavorativi conteggiati: ${workingDays}.`;
+  updateWorkingDaysPreview();
+  await refreshData();
 }
 
 function updateWorkingDaysPreview() {
@@ -411,7 +547,6 @@ function updateWorkingDaysPreview() {
   }
 
   const days = countWorkingDays(startDate, endDate);
-
   refs.workingDaysInfo.textContent =
     days > 0
       ? `${days} giorni lavorativi calcolati automaticamente per questo intervallo.`
@@ -427,9 +562,7 @@ function countWorkingDays(startDate, endDate) {
 
   while (cursor <= end) {
     const day = cursor.getDay();
-    if (day !== 0 && day !== 6) {
-      count += 1;
-    }
+    if (day !== 0 && day !== 6) count += 1;
     cursor.setDate(cursor.getDate() + 1);
   }
 
@@ -442,20 +575,20 @@ function renderHistory() {
   const startFilter = refs.historyStart.value;
   const endFilter = refs.historyEnd.value;
 
-  const rows = state.requests
+  state.historyRows = state.requests
     .filter((request) => (statusFilter === "all" ? true : request.status === statusFilter))
     .filter((request) => (employeeFilter === "all" ? true : request.employeeId === employeeFilter))
     .filter((request) => (!startFilter ? true : request.startDate >= startFilter))
     .filter((request) => (!endFilter ? true : request.endDate <= endFilter))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  refs.historyTableBody.innerHTML = rows.length
-    ? rows
+  refs.historyTableBody.innerHTML = state.historyRows.length
+    ? state.historyRows
         .map((request) => {
           const employee = getEmployeeById(request.employeeId);
           return `
             <tr>
-              <td>${employee.name}</td>
+              <td>${employee?.fullName || "-"}</td>
               <td>${request.type}</td>
               <td>${formatDate(request.startDate)} - ${formatDate(request.endDate)}</td>
               <td>${request.workingDays}</td>
@@ -488,8 +621,8 @@ function renderTeam() {
         <article class="team-row">
           <div class="team-row-head">
             <div>
-              <h4>${employee.name}</h4>
-              <p class="meta-line">${employee.team}</p>
+              <h4>${employee.fullName}</h4>
+              <p class="meta-line">${employee.email}</p>
             </div>
             <strong>${used}/${employee.annualQuota}</strong>
           </div>
@@ -510,8 +643,8 @@ function renderTeam() {
         <article class="team-row">
           <div class="team-row-head">
             <div>
-              <h4>${employee.name}</h4>
-              <p class="meta-line">${employee.team}</p>
+              <h4>${employee.fullName}</h4>
+              <p class="meta-line">${employee.email}</p>
             </div>
             <span class="badge ${ratio > 85 ? "Rejected" : ratio > 60 ? "Pending" : "Approved"}">${ratio}%</span>
           </div>
@@ -529,14 +662,14 @@ function renderTeam() {
 
 function exportCsv() {
   const rows = [
-    ["Dipendente", "Team", "Tipo", "Data inizio", "Data fine", "Giorni lavorativi", "Stato", "Note", "Creata"]
+    ["Dipendente", "Email", "Tipo", "Data inizio", "Data fine", "Giorni lavorativi", "Stato", "Note", "Creata"]
   ];
 
-  state.requests.forEach((request) => {
+  state.historyRows.forEach((request) => {
     const employee = getEmployeeById(request.employeeId);
     rows.push([
-      employee.name,
-      employee.team,
+      employee?.fullName || "",
+      employee?.email || "",
       request.type,
       request.startDate,
       request.endDate,
@@ -565,17 +698,9 @@ function formatDate(value) {
     day: "2-digit",
     month: "short",
     year: "numeric"
-  }).format(new Date(`${value}T12:00:00`));
+  }).format(new Date(value));
 }
 
 function toISODate(date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-}
-
-function generateId() {
-  if (globalThis.crypto?.randomUUID) {
-    return globalThis.crypto.randomUUID();
-  }
-
-  return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
