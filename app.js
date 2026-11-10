@@ -1256,10 +1256,28 @@ async function fetchEmployeePay() {
 }
 
 function payTableError(error) {
-  if (/relation .* does not exist|schema cache|employee_pay|payslip_items/i.test(error.message || "")) {
-    return "Tabelle mancanti: esegui supabase_payroll.sql nel SQL Editor di Supabase.";
+  const msg = error?.message || "";
+  // Colonna mancante -> script non ancora eseguito (o eseguito in versione vecchia)
+  const col = msg.match(/'([a-z_]+)' column of '([a-z_]+)'/i) || msg.match(/column [a-z_]+\.([a-z_]+) does not exist/i);
+  if (col) {
+    const scriptFor = {
+      billing_email: "supabase_billing.sql", billing_name: "supabase_billing.sql", billing_address: "supabase_billing.sql",
+      tax_id: "supabase_billing.sql", bank_holder: "supabase_billing.sql", bank_name: "supabase_billing.sql",
+      iban: "supabase_billing.sql", bic_swift: "supabase_billing.sql", pay_type: "supabase_billing.sql",
+      sent_at: "supabase_billing.sql", sent_to: "supabase_billing.sql"
+    };
+    const script = scriptFor[col[1]] || "l'ultimo script SQL del repository";
+    return `Database da aggiornare: manca il campo "${col[1]}". Esegui ${script} nel SQL Editor di Supabase.`;
   }
-  return error.message;
+  const table = msg.match(/relation "?(?:public\.)?([a-z_]+)"? does not exist/i) || msg.match(/table '(?:public\.)?([a-z_]+)'/i);
+  if (table) {
+    const scriptFor = {
+      employee_pay: "supabase_payroll.sql", payslip_items: "supabase_payroll.sql",
+      leave_adjustments: "supabase_validations.sql", payslip_validations: "supabase_validations.sql"
+    };
+    return `Database da aggiornare: manca la tabella "${table[1]}". Esegui ${scriptFor[table[1]] || "lo script SQL indicato nel README"} nel SQL Editor di Supabase.`;
+  }
+  return msg;
 }
 
 function getPay(employeeId) {
