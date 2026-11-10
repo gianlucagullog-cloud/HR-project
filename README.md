@@ -39,7 +39,12 @@ Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
 - **Saldo ferie** automatico per l'anno: totale spettante (pro-rata dal mese di inizio contratto), godute, in attesa, residue.
 - **Simulazione busta paga** mensile (importi lordi): daily rate × giorni lavorati (giorni lavorativi lun–ven − ferie, permessi e malattia approvati), più voci bonus **Ferie pagate** (giorni × daily rate) e **Rimborso** (importo libero). Stampabile.
 
-Setup una tantum: esegui `supabase_payroll.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
+- **Saldo ferie su anno solare** (1 gennaio – 31 dicembre, nessun riporto): pulsanti *Azzera godute* (riparte solo il contatore, richieste e fatture invariate; annullabile) e *Azzera in attesa* (rifiuta le richieste di ferie pendenti).
+- **Validazione mensile**: *Valida importo* congela l'importo del mese (tabella `payslip_validations`); il mese non è più modificabile finché non annulli la validazione.
+- **Fatturato**: tabella mesi dell'anno (simulato / validato / stato), totale validato nell'anno, da validare, totale complessivo.
+- Il daily rate = salario annuo ÷ giorni lavorativi dell'anno: con tutte le ferie della quota godute, l'anno vale esattamente il salario annuo.
+
+Setup una tantum: esegui `supabase_payroll.sql` e poi `supabase_validations.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
 
 ## Deploy
 
@@ -59,6 +64,7 @@ Il repository è già collegato a Vercel. Ogni push su `main` fa il deploy.
 | `app.js`            | Logica client, integrazione Supabase |
 | `supabase_setup.sql`| Schema DB, trigger e RLS |
 | `supabase_payroll.sql`| Tabelle schede dipendente / payslip + fix sicurezza profili |
+| `supabase_validations.sql`| Azzeramento ferie e validazione mesi fatturati |
 | `.nojekyll`         | Evita che GitHub Pages processi i file |
 
 ## Flusso utente

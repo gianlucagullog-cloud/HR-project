@@ -745,6 +745,37 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
   .leave-grid { grid-template-columns: 1fr 1fr; }
 }
 
+.leave-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.emp-sheet .card-head { flex-wrap: wrap; }
+
+.validation-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  border: 1px solid #f3dca6;
+}
+.validation-box > div { display: grid; gap: 2px; }
+.validation-box.validated { background: var(--success-soft); border-color: #bfe8cf; }
+.validation-box.validated strong { color: var(--success); }
+.validation-warn { color: var(--danger); font-size: 0.85rem; font-weight: 500; }
+.pay-item-form.is-locked { opacity: 0.5; }
+
+.inv-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.inv-table .inv-row { cursor: pointer; }
+.inv-table .inv-row.is-selected td { background: var(--info-soft); }
+.inv-table tfoot td { font-weight: 700; border-top: 2px solid var(--ink); background: var(--surface-2); }
+
 /* =================================================================
    RESPONSIVE
 ================================================================= */

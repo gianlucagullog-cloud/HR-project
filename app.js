@@ -25,7 +25,10 @@ const state = {
   payData: {},            // employee_id -> riga employee_pay
   selectedEmployeeId: "",
   payMonth: "",           // "YYYY-MM"
-  payItems: []
+  payItems: [],           // voci del mese selezionato
+  payItemsAll: [],        // tutte le voci del dipendente selezionato
+  validations: [],        // mesi validati del dipendente selezionato
+  leaveAdj: {}            // "employeeId|anno" -> giorni godute azzerati
 };
 
 const refs = {
@@ -146,6 +149,19 @@ const refs = {
   payItemAmountWrap: el("payItemAmountWrap"),
   payItemDesc: el("payItemDesc"),
   payStatus: el("payStatus"),
+  payValidation: el("payValidation"),
+  leaveResetUsed: el("leaveResetUsed"),
+  leaveUndoReset: el("leaveUndoReset"),
+  leaveResetPending: el("leaveResetPending"),
+  invYearLabel: el("invYearLabel"),
+  invYearValidated: el("invYearValidated"),
+  invYearCount: el("invYearCount"),
+  invYearOpen: el("invYearOpen"),
+  invAllTime: el("invAllTime"),
+  invAllTimeCount: el("invAllTimeCount"),
+  invBody: el("invBody"),
+  invTotSim: el("invTotSim"),
+  invTotVal: el("invTotVal"),
 
   // template
   metricTemplate: el("metricCardTemplate")
@@ -458,11 +474,19 @@ async function refreshData() {
   }
 
   if (state.profile.role === "admin") {
-    const payResult = await fetchEmployeePay();
+    const [payResult, adjResult] = await Promise.all([
+      fetchEmployeePay(),
+      supabaseClient.from("leave_adjustments").select("employee_id, year, used_offset")
+    ]);
     if (payResult.error) {
       console.error(payResult.error);
     } else {
       state.payData = Object.fromEntries(payResult.data.map((r) => [r.employee_id, r]));
+    }
+    if (adjResult.error) {
+      console.error(adjResult.error);
+    } else {
+      state.leaveAdj = Object.fromEntries(adjResult.data.map((r) => [`${r.employee_id}|${r.year}`, Number(r.used_offset) || 0]));
     }
   }
 
@@ -1141,6 +1165,8 @@ function bindEmployeeSheetEvents() {
 
   refs.empSelect.addEventListener("change", async () => {
     state.selectedEmployeeId = refs.empSelect.value;
+    state.payItemsAll = [];
+    state.validations = [];
     setStatus(refs.empStatus, "");
     setStatus(refs.payStatus, "");
     renderEmployeeSheet();
@@ -1150,8 +1176,8 @@ function bindEmployeeSheetEvents() {
   refs.payMonth.addEventListener("change", async () => {
     if (!refs.payMonth.value) return;
     state.payMonth = refs.payMonth.value;
+    setStatus(refs.payStatus, "");
     renderEmployeeSheet();
-    await loadPayItems();
   });
 
   refs.empForm.addEventListener("submit", saveEmployeeSheet);
@@ -1162,9 +1188,31 @@ function bindEmployeeSheetEvents() {
   refs.payItemForm.addEventListener("submit", addPayItem);
   refs.payPrint.addEventListener("click", printPayslip);
 
+  refs.leaveResetUsed.addEventListener("click", resetUsedLeave);
+  refs.leaveUndoReset.addEventListener("click", undoLeaveReset);
+  refs.leaveResetPending.addEventListener("click", resetPendingLeave);
+
+  refs.payValidation.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-validation]");
+    if (!btn) return;
+    if (btn.dataset.validation === "validate") validateMonth();
+    else unvalidateMonth();
+  });
+
+  refs.invBody.addEventListener("click", async (event) => {
+    const row = event.target.closest("[data-month]");
+    if (!row) return;
+    state.payMonth = row.dataset.month;
+    refs.payMonth.value = state.payMonth;
+    setStatus(refs.payStatus, "");
+    renderEmployeeSheet();
+    refs.payValidation.closest(".card").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   refs.payBody.addEventListener("click", async (event) => {
     const btn = event.target.closest("[data-delete-item]");
     if (!btn) return;
+    if (getValidation(state.payMonth)) return setStatus(refs.payStatus, "Mese validato: annulla la validazione per modificarlo.", "error");
     if (!confirm("Eliminare questa voce?")) return;
     const { error } = await supabaseClient.from("payslip_items").delete().eq("id", btn.dataset.deleteItem);
     if (error) return setStatus(refs.payStatus, payTableError(error), "error");
@@ -1236,12 +1284,14 @@ function computeLeaveBalance(employee, pay, year) {
   }
   const total = Math.round(((quota * months) / 12) * 2) / 2;
 
-  const used = sumDays(employee.id, from, to, { type: "Ferie", status: "Approved" });
+  const usedRaw = sumDays(employee.id, from, to, { type: "Ferie", status: "Approved" });
+  const offset = state.leaveAdj[`${employee.id}|${year}`] || 0;
+  const used = Math.max(usedRaw - offset, 0);
   const pending = sumDays(employee.id, from, to, { type: "Ferie", status: "Pending" });
   const permessi = sumDays(employee.id, from, to, { type: "Permesso", status: "Approved" });
   const malattia = sumDays(employee.id, from, to, { type: "Malattia", status: "Approved" });
 
-  return { quota, months, total, used, pending, permessi, malattia, remaining: total - used };
+  return { quota, months, total, used, usedRaw, offset, pending, permessi, malattia, remaining: total - used };
 }
 
 function computePayslip(employee, pay, ym) {
@@ -1260,19 +1310,22 @@ function computePayslip(employee, pay, ym) {
 
   // Ferie retribuite fino a esaurimento della quota annua spettante
   const entitlement = computeLeaveBalance(employee, pay, year).total;
-  const ferieBefore = sumDays(employee.id, `${year}-01-01`, prevDay(start), { type: "Ferie", status: "Approved" });
+  const offset = state.leaveAdj[`${employee.id}|${year}`] || 0;
+  const ferieBefore = Math.max(
+    sumDays(employee.id, `${year}-01-01`, prevDay(start), { type: "Ferie", status: "Approved" }) - offset, 0);
   const ferieLeft = Math.max(entitlement - ferieBefore, 0);
   const paidFerie = Math.min(ferie, ferieLeft);
   const unpaidFerie = ferie - paidFerie;
 
   const base = worked * rate;
   const ferieAmount = paidFerie * rate;
-  const bonus = state.payItems.reduce((s, i) => s + Number(i.amount || 0), 0);
+  const items = itemsForMonth(start);
+  const bonus = items.reduce((s, i) => s + Number(i.amount || 0), 0);
 
   return {
     year, rate, start, end, effStart, workingDays, ferie, paidFerie, unpaidFerie,
-    permessi, malattia, worked, base, ferieAmount, bonus,
-    total: base + ferieAmount + bonus
+    permessi, malattia, worked, base, ferieAmount, bonus, items,
+    total: Math.round((base + ferieAmount + bonus) * 100) / 100
   };
 }
 
@@ -1347,6 +1400,10 @@ function renderEmployeeSheet() {
   refs.leaveRemaining.textContent = `${fmtDays(lb.remaining)} gg`;
   refs.leaveRemaining.classList.toggle("negative", lb.remaining < 0);
   refs.leaveBar.style.width = `${lb.total ? Math.min(100, Math.round((lb.used / lb.total) * 100)) : 0}%`;
+  refs.leaveResetUsed.classList.toggle("hidden", !lb.used);
+  refs.leaveUndoReset.classList.toggle("hidden", !lb.offset);
+  refs.leaveResetPending.classList.toggle("hidden", !lb.pending);
+  if (lb.offset) refs.leaveTotalDetail.textContent += ` · azzerati ${fmtDays(lb.offset)} gg godute`;
   refs.leaveOther.textContent = `Altre assenze approvate nell'anno: Permessi ${fmtDays(lb.permessi)} gg · Malattia ${fmtDays(lb.malattia)} gg`;
 
   const rate = effectiveRate(pay, year);
@@ -1390,7 +1447,9 @@ function renderPayslip(employee, pay) {
       </tr>`);
   }
 
-  state.payItems.forEach((i) => {
+  const validation = getValidation(state.payMonth);
+  state.payItems = ps.items;
+  ps.items.forEach((i) => {
     rows.push(`
       <tr>
         <td><span class="badge ${i.kind === "Rimborso" ? "neutral" : "Approved"}">${i.kind === "Ferie pagate" ? "Ferie liquidate" : escapeHtml(i.kind)}</span>
@@ -1398,7 +1457,7 @@ function renderPayslip(employee, pay) {
         <td class="num">${i.days != null ? fmtDays(i.days) : ""}</td>
         <td class="num">${i.days != null && Number(i.days) ? fmtEur(i.amount / i.days) : ""}</td>
         <td class="num">${fmtEur(i.amount)}</td>
-        <td class="num"><button type="button" class="action-button reject" data-delete-item="${i.id}" title="Elimina">✕</button></td>
+        <td class="num">${validation ? "" : `<button type="button" class="action-button reject" data-delete-item="${i.id}" title="Elimina">✕</button>`}</td>
       </tr>`);
   });
 
@@ -1413,7 +1472,35 @@ function renderPayslip(employee, pay) {
     ? ` Daily rate = ${fmtEur(pay.annualSalary)} ÷ ${workingDaysInYear(ps.year)} giorni lavorativi ${ps.year}.`
     : (ps.rate ? "" : " — Imposta il salario annuo nei dati contrattuali.");
   refs.payDaysDetail.textContent = parts.join(" · ") + "." + rateNote;
-  state.lastPayslip = { employee, pay, ps };
+  state.lastPayslip = { employee, pay, ps, validation };
+
+  // Barra validazione
+  const monthLabel = monthName(state.payMonth);
+  if (validation) {
+    const changed = Math.abs(Number(validation.amount) - ps.total) >= 0.01;
+    refs.payValidation.innerHTML = `
+      <div class="validation-box validated">
+        <div>
+          <strong>✓ ${monthLabel} validato: ${fmtEur(validation.amount)}</strong>
+          <span class="metric-detail">il ${formatDate(validation.validated_at)}${validation.validated_by ? ` da ${escapeHtml(getEmployeeById(validation.validated_by)?.fullName || "admin")}` : ""}</span>
+          ${changed ? `<span class="validation-warn">Attenzione: con i dati attuali il mese varrebbe ${fmtEur(ps.total)}. L'importo validato resta ${fmtEur(validation.amount)}.</span>` : ""}
+        </div>
+        <button type="button" class="action-button neutral" data-validation="undo">Annulla validazione</button>
+      </div>`;
+  } else {
+    refs.payValidation.innerHTML = `
+      <div class="validation-box">
+        <div>
+          <strong>${monthLabel}: da validare</strong>
+          <span class="metric-detail">Validando, l'importo di ${fmtEur(ps.total)} viene registrato nel fatturato e il mese non è più modificabile.</span>
+        </div>
+        <button type="button" class="primary-button" data-validation="validate" ${ps.total > 0 ? "" : "disabled"}>Valida importo</button>
+      </div>`;
+  }
+  refs.payItemForm.classList.toggle("is-locked", Boolean(validation));
+  [...refs.payItemForm.elements].forEach((el) => { el.disabled = Boolean(validation); });
+
+  renderInvoiceHistory(employee, pay);
 }
 
 function syncPayItemForm() {
@@ -1424,21 +1511,166 @@ function syncPayItemForm() {
 
 async function loadPayItems() {
   if (!supabaseClient || state.profile?.role !== "admin" || !state.selectedEmployeeId) return;
-  const { start } = monthBounds(state.payMonth);
-  const { data, error } = await supabaseClient
-    .from("payslip_items")
-    .select("id, kind, description, days, amount, created_at")
-    .eq("employee_id", state.selectedEmployeeId)
-    .eq("month", start)
-    .order("created_at", { ascending: true });
+  const empId = state.selectedEmployeeId;
+  const [itemsRes, valRes] = await Promise.all([
+    supabaseClient.from("payslip_items")
+      .select("id, month, kind, description, days, amount, created_at")
+      .eq("employee_id", empId)
+      .order("created_at", { ascending: true }),
+    supabaseClient.from("payslip_validations")
+      .select("id, month, amount, daily_rate, worked_days, paid_leave, bonus_amount, validated_at, validated_by")
+      .eq("employee_id", empId)
+      .order("month", { ascending: true })
+  ]);
+  if (empId !== state.selectedEmployeeId) return; // nel frattempo è cambiato dipendente
 
-  if (error) {
-    state.payItems = [];
-    setStatus(refs.payStatus, payTableError(error), "error");
-  } else {
-    state.payItems = data;
-  }
+  state.payItemsAll = itemsRes.error ? [] : itemsRes.data;
+  state.validations = valRes.error ? [] : valRes.data;
+  const err = itemsRes.error || valRes.error;
+  if (err) setStatus(refs.payStatus, payTableError(err), "error");
   renderEmployeeSheet();
+}
+
+function itemsForMonth(monthStart) {
+  return state.payItemsAll.filter((i) => i.month === monthStart);
+}
+
+function getValidation(ym) {
+  const { start } = monthBounds(ym);
+  return state.validations.find((v) => v.month === start);
+}
+
+function monthName(ym) {
+  const label = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric" })
+    .format(new Date(`${monthBounds(ym).start}T12:00:00`));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function renderInvoiceHistory(employee, pay) {
+  const year = Number(state.payMonth.slice(0, 4));
+  const now = new Date();
+  const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const startYm = pay.contractStart ? pay.contractStart.slice(0, 7) : null;
+
+  let totSim = 0, totVal = 0, open = 0, validatedCount = 0;
+  const rows = [];
+  for (let m = 1; m <= 12; m++) {
+    const ym = `${year}-${String(m).padStart(2, "0")}`;
+    if (startYm && ym < startYm) continue;
+    const ps = computePayslip(employee, pay, ym);
+    const v = getValidation(ym);
+    const future = ym > currentYm;
+    totSim += ps.total;
+    if (v) { totVal += Number(v.amount); validatedCount += 1; }
+    else if (!future) open += ps.total;
+
+    const status = v
+      ? `<span class="badge Approved">Validato</span>`
+      : future ? `<span class="badge disabled">Futuro</span>` : `<span class="badge Pending">Da validare</span>`;
+    rows.push(`
+      <tr data-month="${ym}" class="inv-row ${ym === state.payMonth ? "is-selected" : ""}">
+        <td>${monthName(ym)}</td>
+        <td class="num">${fmtEur(ps.total)}</td>
+        <td class="num">${v ? fmtEur(v.amount) : "-"}</td>
+        <td>${status}</td>
+      </tr>`);
+  }
+
+  refs.invYearLabel.textContent = year;
+  refs.invBody.innerHTML = rows.join("") ||
+    `<tr><td colspan="4" class="empty-state">Contratto non ancora iniziato in questo anno.</td></tr>`;
+  refs.invTotSim.textContent = fmtEur(totSim);
+  refs.invTotVal.textContent = fmtEur(totVal);
+  refs.invYearValidated.textContent = fmtEur(totVal);
+  refs.invYearCount.textContent = `${validatedCount} ${validatedCount === 1 ? "mese validato" : "mesi validati"}`;
+  refs.invYearOpen.textContent = fmtEur(open);
+
+  const allTime = state.validations.reduce((s, v) => s + Number(v.amount), 0);
+  refs.invAllTime.textContent = fmtEur(allTime);
+  const first = state.validations[0]?.month;
+  refs.invAllTimeCount.textContent = state.validations.length
+    ? `${state.validations.length} ${state.validations.length === 1 ? "mese validato" : "mesi validati"} dal ${monthName(first.slice(0, 7)).toLowerCase()}`
+    : "Nessun mese validato";
+}
+
+async function validateMonth() {
+  const ctx = state.lastPayslip;
+  if (!ctx || getValidation(state.payMonth)) return;
+  const { employee, ps } = ctx;
+  const label = monthName(state.payMonth);
+  if (!confirm(`Validare ${label} di ${employee.fullName} per ${fmtEur(ps.total)}?\n\nL'importo viene registrato nel fatturato e il mese non sarà più modificabile (puoi annullare la validazione).`)) return;
+
+  const { error } = await supabaseClient.from("payslip_validations").insert({
+    employee_id: employee.id,
+    month: ps.start,
+    amount: ps.total,
+    daily_rate: Math.round(ps.rate * 100) / 100,
+    worked_days: ps.worked,
+    paid_leave: ps.paidFerie,
+    bonus_amount: Math.round(ps.bonus * 100) / 100,
+    details: {
+      working_days: ps.workingDays, ferie: ps.ferie, unpaid_ferie: ps.unpaidFerie,
+      permessi: ps.permessi, malattia: ps.malattia,
+      base: Math.round(ps.base * 100) / 100, ferie_amount: Math.round(ps.ferieAmount * 100) / 100,
+      items: ps.items.map((i) => ({ kind: i.kind, description: i.description, days: i.days, amount: i.amount }))
+    },
+    validated_by: state.profile.id
+  });
+  if (error) return setStatus(refs.payStatus, payTableError(error), "error");
+  setStatus(refs.payStatus, `${label} validato: ${fmtEur(ps.total)}.`, "success");
+  await loadPayItems();
+}
+
+async function unvalidateMonth() {
+  const v = getValidation(state.payMonth);
+  if (!v) return;
+  if (!confirm(`Annullare la validazione di ${monthName(state.payMonth)} (${fmtEur(v.amount)})?\nL'importo verrà tolto dal fatturato.`)) return;
+  const { error } = await supabaseClient.from("payslip_validations").delete().eq("id", v.id);
+  if (error) return setStatus(refs.payStatus, payTableError(error), "error");
+  setStatus(refs.payStatus, "Validazione annullata.", "success");
+  await loadPayItems();
+}
+
+async function resetUsedLeave() {
+  const employee = getEmployeeById(state.selectedEmployeeId);
+  if (!employee) return;
+  const year = Number(state.payMonth.slice(0, 4));
+  const lb = computeLeaveBalance(employee, getPay(employee.id), year);
+  if (!lb.used) return;
+  if (!confirm(`Azzerare le ferie godute ${year} di ${employee.fullName} (${fmtDays(lb.used)} gg)?\n\nLe richieste restano nello storico e le fatture non cambiano: riparte solo il contatore, quindi le residue tornano a ${fmtDays(lb.total)} gg.`)) return;
+
+  const { error } = await supabaseClient.from("leave_adjustments").upsert({
+    employee_id: employee.id, year, used_offset: lb.usedRaw,
+    updated_at: new Date().toISOString(), updated_by: state.profile.id
+  });
+  if (error) return setStatus(refs.empStatus, payTableError(error), "error");
+  await refreshData();
+}
+
+async function undoLeaveReset() {
+  const employee = getEmployeeById(state.selectedEmployeeId);
+  if (!employee) return;
+  const year = Number(state.payMonth.slice(0, 4));
+  if (!confirm(`Annullare l'azzeramento ferie ${year} di ${employee.fullName}? Il contatore torna a considerare tutte le ferie approvate dell'anno.`)) return;
+  const { error } = await supabaseClient.from("leave_adjustments").delete()
+    .eq("employee_id", employee.id).eq("year", year);
+  if (error) return setStatus(refs.empStatus, payTableError(error), "error");
+  await refreshData();
+}
+
+async function resetPendingLeave() {
+  const employee = getEmployeeById(state.selectedEmployeeId);
+  if (!employee) return;
+  const year = Number(state.payMonth.slice(0, 4));
+  const ids = state.requests
+    .filter((r) => r.employeeId === employee.id && r.type === "Ferie" && r.status === "Pending" &&
+                   clippedWorkingDays(r, `${year}-01-01`, `${year}-12-31`) > 0)
+    .map((r) => r.id);
+  if (!ids.length) return;
+  if (!confirm(`Rifiutare ${ids.length} ${ids.length === 1 ? "richiesta" : "richieste"} di ferie in attesa (${year}) di ${employee.fullName}?`)) return;
+  const { error } = await supabaseClient.from("leave_requests").update({ status: "Rejected" }).in("id", ids);
+  if (error) return setStatus(refs.empStatus, error.message, "error");
+  await refreshData();
 }
 
 async function saveEmployeeSheet(event) {
@@ -1480,6 +1712,7 @@ async function addPayItem(event) {
   if (!employee) return;
   const pay = getPay(employee.id);
   const kind = refs.payItemKind.value;
+  if (getValidation(state.payMonth)) return setStatus(refs.payStatus, "Mese validato: annulla la validazione per modificarlo.", "error");
 
   let days = null;
   let amount;
@@ -1524,6 +1757,7 @@ function printPayslip() {
     <style>
       body{font-family:Inter,Arial,sans-serif;color:#0f1a2e;margin:40px;font-size:13px}
       h1{font-size:20px;margin:0 0 4px} .muted{color:#6b7a94}
+      .sim.ok{background:#e5f7ec;color:#0fa958}
       .sim{display:inline-block;margin-top:6px;padding:2px 8px;border-radius:4px;background:#fff5e0;color:#d68200;font-weight:600;font-size:11px}
       dl{display:grid;grid-template-columns:160px 1fr;gap:4px 12px;margin:20px 0}
       dt{color:#6b7a94} dd{margin:0}
@@ -1532,8 +1766,10 @@ function printPayslip() {
       th{background:#f0f3f8;font-size:11px;text-transform:uppercase;color:#6b7a94}
       .num{text-align:right} tfoot td{font-weight:700;border-top:2px solid #0f1a2e}
     </style></head><body>
-    <h1>Marathonbet Italia — Busta paga ${monthLabel}</h1>
-    <span class="sim">SIMULAZIONE — importi lordi, documento non ufficiale</span>
+    <h1>Marathonbet Italia — Fattura ${monthLabel}</h1>
+    ${ctx.validation
+      ? `<span class="sim ok">VALIDATO il ${formatDate(ctx.validation.validated_at)} — ${fmtEur(ctx.validation.amount)}</span>`
+      : `<span class="sim">SIMULAZIONE — importi lordi, documento non ufficiale</span>`}
     <dl>
       <dt>Dipendente</dt><dd>${escapeHtml(employee.fullName)}</dd>
       <dt>Ruolo</dt><dd>${escapeHtml(pay.jobTitle || "-")}</dd>

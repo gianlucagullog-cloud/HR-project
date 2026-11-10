@@ -289,7 +289,7 @@
           <div class="page-head">
             <div>
               <h1>Schede dipendente</h1>
-              <p class="muted">Dati contrattuali, saldo ferie e simulazione della busta paga mensile.</p>
+              <p class="muted">Dati contrattuali, saldo ferie, fatture mensili e fatturato.</p>
             </div>
             <label class="emp-picker">
               <span>Dipendente</span>
@@ -356,7 +356,13 @@
               <article class="card">
                 <div class="card-head">
                   <h3>Saldo ferie <span class="muted" id="leaveYearLabel"></span></h3>
+                  <div class="leave-actions">
+                    <button type="button" class="action-button neutral" id="leaveResetUsed">Azzera godute</button>
+                    <button type="button" class="action-button neutral hidden" id="leaveUndoReset">Annulla azzeramento</button>
+                    <button type="button" class="action-button reject" id="leaveResetPending">Azzera in attesa</button>
+                  </div>
                 </div>
+                <p class="metric-detail">Anno solare dal 1 gennaio al 31 dicembre; le ferie non godute non passano all'anno successivo.</p>
                 <div class="leave-grid">
                   <div class="metric-card"><span class="metric-label">Totale spettante</span><strong class="metric-value" id="leaveTotal">-</strong><span class="metric-detail" id="leaveTotalDetail"></span></div>
                   <div class="metric-card"><span class="metric-label">Godute</span><strong class="metric-value" id="leaveUsed">-</strong><span class="metric-detail">Ferie approvate nell'anno</span></div>
@@ -370,12 +376,14 @@
 
             <article class="card" id="payslipCard">
               <div class="card-head">
-                <h3>Simulazione busta paga</h3>
+                <h3>Simulazione fattura mensile</h3>
                 <div class="payslip-tools">
                   <input type="month" id="payMonth" />
                   <button type="button" class="ghost-button" id="payPrint">Stampa</button>
                 </div>
               </div>
+
+              <div class="pay-validation" id="payValidation"></div>
 
               <div class="table-wrap">
                 <table class="payslip-table">
@@ -413,6 +421,29 @@
                 <button type="submit" class="primary-button">Aggiungi</button>
               </form>
               <p class="status-message" id="payStatus"></p>
+            </article>
+
+            <article class="card" id="invoiceCard">
+              <div class="card-head">
+                <h3>Fatturato <span class="muted" id="invYearLabel"></span></h3>
+              </div>
+              <div class="inv-kpis">
+                <div class="metric-card"><span class="metric-label">Validato nell'anno</span><strong class="metric-value" id="invYearValidated">-</strong><span class="metric-detail" id="invYearCount"></span></div>
+                <div class="metric-card"><span class="metric-label">Da validare (simulato)</span><strong class="metric-value" id="invYearOpen">-</strong><span class="metric-detail">Mesi passati e in corso non ancora validati</span></div>
+                <div class="metric-card"><span class="metric-label">Totale fatturato complessivo</span><strong class="metric-value" id="invAllTime">-</strong><span class="metric-detail" id="invAllTimeCount"></span></div>
+              </div>
+              <div class="table-wrap">
+                <table class="payslip-table inv-table">
+                  <thead>
+                    <tr><th>Mese</th><th class="num">Simulato</th><th class="num">Validato</th><th>Stato</th></tr>
+                  </thead>
+                  <tbody id="invBody"></tbody>
+                  <tfoot>
+                    <tr><td>Totale anno</td><td class="num" id="invTotSim">-</td><td class="num" id="invTotVal">-</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p class="metric-detail">Clicca un mese per aprirne la simulazione.</p>
             </article>
           </div>
         </section>
