@@ -364,6 +364,25 @@
                     <span>Partita IVA / Codice fiscale</span>
                     <input type="text" id="empTaxId" autocomplete="off" />
                   </label>
+
+                  <h4 class="form-section full-width">Dati bancari</h4>
+                  <label>
+                    <span>Intestatario del conto</span>
+                    <input type="text" id="empBankHolder" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>Banca</span>
+                    <input type="text" id="empBankName" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>IBAN</span>
+                    <input type="text" id="empIban" autocomplete="off" spellcheck="false" placeholder="IT60 X054 2811 1010 0000 0123 456" />
+                    <small class="metric-detail" id="empIbanHint"></small>
+                  </label>
+                  <label>
+                    <span>BIC / SWIFT</span>
+                    <input type="text" id="empBic" autocomplete="off" spellcheck="false" />
+                  </label>
                   <div class="form-actions full-width">
                     <p class="status-message" id="empStatus"></p>
                     <button type="submit" class="primary-button">Salva scheda</button>

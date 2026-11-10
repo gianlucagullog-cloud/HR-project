@@ -131,6 +131,11 @@ const refs = {
   empBillingEmail: el("empBillingEmail"),
   empBillingAddress: el("empBillingAddress"),
   empTaxId: el("empTaxId"),
+  empBankHolder: el("empBankHolder"),
+  empBankName: el("empBankName"),
+  empIban: el("empIban"),
+  empIbanHint: el("empIbanHint"),
+  empBic: el("empBic"),
   empStatus: el("empStatus"),
   leaveYearLabel: el("leaveYearLabel"),
   leaveTotal: el("leaveTotal"),
@@ -1195,6 +1200,8 @@ function bindEmployeeSheetEvents() {
   refs.empForm.addEventListener("submit", saveEmployeeSheet);
 
   refs.empRate.addEventListener("input", syncSalaryField);
+  refs.empIban.addEventListener("input", syncIbanHint);
+  refs.empIban.addEventListener("blur", () => { refs.empIban.value = formatIban(refs.empIban.value); });
 
   refs.payItemKind.addEventListener("change", syncPayItemForm);
   refs.payItemForm.addEventListener("submit", addPayItem);
@@ -1261,7 +1268,11 @@ function getPay(employeeId) {
     billingName: r.billing_name || "",
     billingEmail: r.billing_email || "",
     billingAddress: r.billing_address || "",
-    taxId: r.tax_id || ""
+    taxId: r.tax_id || "",
+    bankHolder: r.bank_holder || "",
+    bankName: r.bank_name || "",
+    iban: r.iban || "",
+    bic: r.bic_swift || ""
   };
 }
 
@@ -1342,6 +1353,33 @@ function computePayslip(employee, pay, ym) {
   };
 }
 
+function normalizeIban(v) {
+  return String(v || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function formatIban(v) {
+  return normalizeIban(v).replace(/(.{4})/g, "$1 ").trim();
+}
+
+// Controllo standard ISO 13616 (mod 97)
+function isValidIban(v) {
+  const iban = normalizeIban(v);
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) return false;
+  if (iban.startsWith("IT") && iban.length !== 27) return false;
+  const moved = (iban.slice(4) + iban.slice(0, 4))
+    .replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
+  let rem = 0;
+  for (const ch of moved) rem = (rem * 10 + Number(ch)) % 97;
+  return rem === 1;
+}
+
+function syncIbanHint() {
+  const v = normalizeIban(refs.empIban.value);
+  refs.empIbanHint.textContent = !v ? "" : isValidIban(v) ? "✓ IBAN valido" : "IBAN non valido";
+  refs.empIbanHint.classList.toggle("ok", Boolean(v) && isValidIban(v));
+  refs.empIbanHint.classList.toggle("bad", Boolean(v) && !isValidIban(v));
+}
+
 function syncSalaryField() {
   const rate = Number(refs.empRate.value);
   refs.empSalary.value = rate > 0 ? annualFromRate(rate).toFixed(2) : "";
@@ -1394,6 +1432,12 @@ function renderEmployeeSheet() {
     refs.empBillingEmail.placeholder = employee.email;
     refs.empBillingAddress.value = pay.billingAddress;
     refs.empTaxId.value = pay.taxId;
+    refs.empBankHolder.value = pay.bankHolder;
+    refs.empBankHolder.placeholder = pay.billingName || employee.fullName;
+    refs.empBankName.value = pay.bankName;
+    refs.empIban.value = formatIban(pay.iban);
+    refs.empBic.value = pay.bic;
+    syncIbanHint();
   }
 
   // Saldo ferie (anno del mese selezionato)
@@ -1686,6 +1730,13 @@ async function saveEmployeeSheet(event) {
   const employee = getEmployeeById(state.selectedEmployeeId);
   if (!employee) return;
 
+  const ibanRaw = normalizeIban(refs.empIban.value);
+  if (ibanRaw && !isValidIban(ibanRaw) &&
+      !confirm("L'IBAN inserito non sembra valido (controllo di correttezza fallito). Salvare comunque?")) {
+    refs.empIban.focus();
+    return;
+  }
+
   const row = {
     employee_id: employee.id,
     job_title: refs.empJobTitle.value.trim(),
@@ -1698,6 +1749,10 @@ async function saveEmployeeSheet(event) {
     billing_email: refs.empBillingEmail.value.trim(),
     billing_address: refs.empBillingAddress.value.trim(),
     tax_id: refs.empTaxId.value.trim().toUpperCase(),
+    bank_holder: refs.empBankHolder.value.trim(),
+    bank_name: refs.empBankName.value.trim(),
+    iban: normalizeIban(refs.empIban.value),
+    bic_swift: refs.empBic.value.replace(/\s+/g, "").toUpperCase(),
     updated_at: new Date().toISOString()
   };
   const quota = Number(refs.empQuota.value);
@@ -1896,7 +1951,15 @@ async function buildInvoicePdf({ employee, pay, v, monthLabel }) {
   });
 
   y = doc.lastAutoTable.finalY + 26;
-  doc.setFontSize(10).text("Si prega di emettere fattura per l'importo totale indicato.", left, y);
+  if (pay.iban) {
+    y = block("Coordinate bancarie per il pagamento", [
+      `Intestatario: ${pay.bankHolder || pay.billingName || employee.fullName}`,
+      pay.bankName ? `Banca: ${pay.bankName}` : null,
+      `IBAN: ${formatIban(pay.iban)}`,
+      pay.bic ? `BIC / SWIFT: ${pay.bic}` : null
+    ].filter(Boolean), left) + 26;
+  }
+  doc.setFont("helvetica", "normal").setFontSize(10).text("Si prega di emettere fattura per l'importo totale indicato.", left, y);
   doc.setFontSize(8).setTextColor(130)
     .text(`Generato il ${formatDate(new Date())} da Marathonbet Leave Control`, left, 800);
   return doc;
@@ -1919,6 +1982,14 @@ function invoiceMailBody({ employee, pay, v, monthLabel }) {
     pay.billingName || employee.fullName,
     ...(pay.billingAddress ? pay.billingAddress.split(/\n/) : []),
     `P.IVA / C.F.: ${pay.taxId || "-"}`,
+    ...(pay.iban ? [
+      "",
+      "Coordinate bancarie per il pagamento:",
+      `Intestatario: ${pay.bankHolder || pay.billingName || employee.fullName}`,
+      ...(pay.bankName ? [`Banca: ${pay.bankName}`] : []),
+      `IBAN: ${formatIban(pay.iban)}`,
+      ...(pay.bic ? [`BIC / SWIFT: ${pay.bic}`] : [])
+    ] : []),
     "",
     "Ti chiediamo di emettere la fattura per l'importo indicato.",
     "",
@@ -1938,7 +2009,8 @@ async function sendInvoice() {
   const missing = [
     !pay.billingName && "nome intestatario",
     !pay.billingAddress && "indirizzo",
-    !pay.taxId && "P.IVA / codice fiscale"
+    !pay.taxId && "P.IVA / codice fiscale",
+    !pay.iban && "IBAN"
   ].filter(Boolean);
   const warn = missing.length ? `\n\nMancano nella scheda: ${missing.join(", ")}.` : "";
   if (!confirm(`Preparare la fattura di ${monthLabel} (${fmtEur(v.amount)}) per ${to}?\n\n` +

@@ -766,6 +766,9 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .pay-item-form.is-locked { opacity: 0.5; }
 .validation-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .sent-line { color: #274a9d; font-weight: 500; }
+#empIbanHint.ok { color: var(--success); }
+#empIbanHint.bad { color: var(--danger); }
+#empIban { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 .form-section { margin: 8px 0 -4px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 0.95rem; font-weight: 600; }
 #empSalary[readonly] { background: var(--surface-2); color: var(--ink-2); }
 

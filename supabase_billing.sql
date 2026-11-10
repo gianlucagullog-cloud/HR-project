@@ -1,5 +1,5 @@
 -- =====================================================================
--- Marathonbet Leave Control - Dati di fatturazione & invio fatture
+-- Marathonbet Leave Control - Dati di fatturazione, bancari & invio fatture
 -- =====================================================================
 -- Esegui nel SQL Editor di Supabase DOPO supabase_validations.sql.
 -- E' idempotente (puoi rieseguirlo senza rompere nulla).
@@ -10,6 +10,12 @@ alter table public.employee_pay add column if not exists billing_email   text no
 alter table public.employee_pay add column if not exists billing_name    text not null default '';
 alter table public.employee_pay add column if not exists billing_address text not null default '';
 alter table public.employee_pay add column if not exists tax_id          text not null default '';
+
+-- 1b) Dati bancari (per il pagamento delle fatture)
+alter table public.employee_pay add column if not exists bank_holder text not null default '';
+alter table public.employee_pay add column if not exists bank_name   text not null default '';
+alter table public.employee_pay add column if not exists iban        text not null default '';
+alter table public.employee_pay add column if not exists bic_swift   text not null default '';
 
 -- 2) Il daily rate diventa il dato principale: salario annuo = daily rate x 228.
 --    Riallinea le schede esistenti (salvate quando il dato principale era il salario).

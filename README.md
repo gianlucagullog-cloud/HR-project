@@ -44,6 +44,7 @@ Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
 - **Fatturato**: tabella mesi dell'anno (simulato / validato / stato), totale validato nell'anno, da validare, totale complessivo.
 - Si inserisce il **daily rate**; il salario annuo è calcolato come daily rate × 228. Si pagano solo i giorni lavorati; le ferie non sono retribuite.
 - **Dati di fatturazione** per dipendente: intestatario, email per le fatture, indirizzo, P.IVA / codice fiscale.
+- **Dati bancari**: intestatario conto, banca, IBAN (con controllo di validità), BIC/SWIFT; riportati nel PDF e nella mail della fattura.
 - **Invia fattura** (solo mesi validati): scarica il PDF del prospetto e apre una nuova email nel programma di posta predefinito (es. Outlook) già compilata; il portale registra data e destinatario dell'invio.
 
 Setup una tantum: esegui `supabase_payroll.sql` poi `supabase_validations.sql` e `supabase_billing.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
