@@ -102,6 +102,7 @@
           <button class="nav-item admin-only" data-view-target="approvals" type="button">Approvazioni <span class="badge-count hidden" id="pendingBadge">0</span></button>
           <button class="nav-item" data-view-target="history" type="button">Storico</button>
           <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
+          <button class="nav-item admin-only" data-view-target="employees" type="button">Dipendenti</button>
           <button class="nav-item admin-only" data-view-target="users" type="button">Utenti <span class="badge-count hidden" id="usersBadge">0</span></button>
         </nav>
 
@@ -281,6 +282,139 @@
           <article class="card">
             <div id="teamTable" class="stack-list"></div>
           </article>
+        </section>
+
+        <!-- SCHEDE DIPENDENTE (admin) -->
+        <section class="view-panel admin-only" data-view="employees">
+          <div class="page-head">
+            <div>
+              <h1>Schede dipendente</h1>
+              <p class="muted">Dati contrattuali, saldo ferie e simulazione della busta paga mensile.</p>
+            </div>
+            <label class="emp-picker">
+              <span>Dipendente</span>
+              <select id="empSelect"></select>
+            </label>
+          </div>
+
+          <div id="empEmpty" class="card empty-state hidden">Nessun dipendente attivo.</div>
+
+          <div id="empSheet" class="emp-sheet">
+            <article class="card emp-identity">
+              <div>
+                <h2 id="empName">-</h2>
+                <p class="meta-line" id="empMeta">-</p>
+              </div>
+              <div class="emp-kpis">
+                <div><span class="metric-label">Daily rate</span><strong id="kpiRate">-</strong></div>
+                <div><span class="metric-label">Salario annuo</span><strong id="kpiSalary">-</strong></div>
+                <div><span class="metric-label">Ferie residue</span><strong id="kpiLeave">-</strong></div>
+              </div>
+            </article>
+
+            <div class="two-col">
+              <article class="card">
+                <div class="card-head"><h3>Dati contrattuali</h3></div>
+                <form id="empForm" class="request-form">
+                  <label>
+                    <span>Ruolo</span>
+                    <input type="text" id="empJobTitle" placeholder="es. CRM Manager" />
+                  </label>
+                  <label>
+                    <span>Dipartimento</span>
+                    <input type="text" id="empDepartment" list="departmentList" placeholder="es. Marketing" />
+                    <datalist id="departmentList"></datalist>
+                  </label>
+                  <label>
+                    <span>Data inizio contratto</span>
+                    <input type="date" id="empContractStart" />
+                  </label>
+                  <label>
+                    <span>Salario annuo lordo (€)</span>
+                    <input type="number" id="empSalary" min="0" step="0.01" />
+                  </label>
+                  <label>
+                    <span>Daily rate (€)</span>
+                    <input type="number" id="empRate" min="0" step="0.01" />
+                    <button type="button" class="link-button emp-hint" id="empRateFromSalary">Calcola da salario annuo (÷ 260 gg)</button>
+                  </label>
+                  <label>
+                    <span>Quota ferie annua (gg)</span>
+                    <input type="number" id="empQuota" min="0" max="365" />
+                  </label>
+                  <label class="full-width">
+                    <span>Note</span>
+                    <textarea id="empNotes" rows="2"></textarea>
+                  </label>
+                  <div class="form-actions full-width">
+                    <p class="status-message" id="empStatus"></p>
+                    <button type="submit" class="primary-button">Salva scheda</button>
+                  </div>
+                </form>
+              </article>
+
+              <article class="card">
+                <div class="card-head">
+                  <h3>Saldo ferie <span class="muted" id="leaveYearLabel"></span></h3>
+                </div>
+                <div class="leave-grid">
+                  <div class="metric-card"><span class="metric-label">Totale spettante</span><strong class="metric-value" id="leaveTotal">-</strong><span class="metric-detail" id="leaveTotalDetail"></span></div>
+                  <div class="metric-card"><span class="metric-label">Godute</span><strong class="metric-value" id="leaveUsed">-</strong><span class="metric-detail">Ferie approvate nell'anno</span></div>
+                  <div class="metric-card"><span class="metric-label">In attesa</span><strong class="metric-value" id="leavePending">-</strong><span class="metric-detail">Richieste da approvare</span></div>
+                  <div class="metric-card"><span class="metric-label">Residue</span><strong class="metric-value" id="leaveRemaining">-</strong><span class="metric-detail">Totale − godute</span></div>
+                </div>
+                <div class="progress-track"><div class="progress-bar" id="leaveBar" style="width:0%"></div></div>
+                <p class="metric-detail" id="leaveOther"></p>
+              </article>
+            </div>
+
+            <article class="card" id="payslipCard">
+              <div class="card-head">
+                <h3>Simulazione busta paga</h3>
+                <div class="payslip-tools">
+                  <input type="month" id="payMonth" />
+                  <button type="button" class="ghost-button" id="payPrint">Stampa</button>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table class="payslip-table">
+                  <thead>
+                    <tr><th>Voce</th><th class="num">Giorni</th><th class="num">Tariffa</th><th class="num">Importo</th><th></th></tr>
+                  </thead>
+                  <tbody id="payBody"></tbody>
+                  <tfoot>
+                    <tr class="pay-total"><td>Totale lordo</td><td></td><td></td><td class="num" id="payTotal">-</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p class="metric-detail" id="payDaysDetail"></p>
+
+              <form id="payItemForm" class="pay-item-form">
+                <label>
+                  <span>Tipo bonus</span>
+                  <select id="payItemKind">
+                    <option value="Ferie pagate">Ferie pagate</option>
+                    <option value="Rimborso">Rimborso</option>
+                  </select>
+                </label>
+                <label id="payItemDaysWrap">
+                  <span>Giorni</span>
+                  <input type="number" id="payItemDays" min="0" step="0.5" />
+                </label>
+                <label id="payItemAmountWrap" class="hidden">
+                  <span>Importo (€)</span>
+                  <input type="number" id="payItemAmount" min="0" step="0.01" />
+                </label>
+                <label class="grow">
+                  <span>Descrizione</span>
+                  <input type="text" id="payItemDesc" placeholder="es. Ferie agosto / Rimborso trasferta" />
+                </label>
+                <button type="submit" class="primary-button">Aggiungi</button>
+              </form>
+              <p class="status-message" id="payStatus"></p>
+            </article>
+          </div>
         </section>
 
         <!-- UTENTI (admin) -->

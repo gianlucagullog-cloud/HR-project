@@ -31,6 +31,16 @@ Stack: **HTML + CSS + JS statico** sul frontend, **Supabase** (Auth + Postgres +
 3. Ricarica il portale e accedi: vedrai la Dashboard HR completa.
 4. Da quel momento approvi gli altri utenti dal tab **Utenti**.
 
+## Schede dipendente e simulazione busta paga
+
+Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
+
+- **Dati contrattuali**: ruolo, dipartimento, data inizio contratto, salario annuo lordo, daily rate (calcolabile da salario ÷ 260 gg), quota ferie, note.
+- **Saldo ferie** automatico per l'anno: totale spettante (pro-rata dal mese di inizio contratto), godute, in attesa, residue.
+- **Simulazione busta paga** mensile (importi lordi): daily rate × giorni lavorati (giorni lavorativi lun–ven − ferie, permessi e malattia approvati), più voci bonus **Ferie pagate** (giorni × daily rate) e **Rimborso** (importo libero). Stampabile.
+
+Setup una tantum: esegui `supabase_payroll.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
+
 ## Deploy
 
 ### Vercel (consigliato)
@@ -48,6 +58,7 @@ Il repository è già collegato a Vercel. Ogni push su `main` fa il deploy.
 | `styles.css`        | Design system del portale |
 | `app.js`            | Logica client, integrazione Supabase |
 | `supabase_setup.sql`| Schema DB, trigger e RLS |
+| `supabase_payroll.sql`| Tabelle schede dipendente / payslip + fix sicurezza profili |
 | `.nojekyll`         | Evita che GitHub Pages processi i file |
 
 ## Flusso utente

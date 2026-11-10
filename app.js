@@ -20,7 +20,12 @@ const state = {
   employees: [],
   allUsers: [],
   requests: [],
-  historyRows: []
+  historyRows: [],
+  // schede dipendente
+  payData: {},            // employee_id -> riga employee_pay
+  selectedEmployeeId: "",
+  payMonth: "",           // "YYYY-MM"
+  payItems: []
 };
 
 const refs = {
@@ -99,6 +104,48 @@ const refs = {
   newUserRole: el("newUserRole"),
   newUserQuota: el("newUserQuota"),
   createUserStatus: el("createUserStatus"),
+
+  // schede dipendente
+  empSelect: el("empSelect"),
+  empEmpty: el("empEmpty"),
+  empSheet: el("empSheet"),
+  empName: el("empName"),
+  empMeta: el("empMeta"),
+  kpiRate: el("kpiRate"),
+  kpiSalary: el("kpiSalary"),
+  kpiLeave: el("kpiLeave"),
+  empForm: el("empForm"),
+  empJobTitle: el("empJobTitle"),
+  empDepartment: el("empDepartment"),
+  departmentList: el("departmentList"),
+  empContractStart: el("empContractStart"),
+  empSalary: el("empSalary"),
+  empRate: el("empRate"),
+  empRateFromSalary: el("empRateFromSalary"),
+  empQuota: el("empQuota"),
+  empNotes: el("empNotes"),
+  empStatus: el("empStatus"),
+  leaveYearLabel: el("leaveYearLabel"),
+  leaveTotal: el("leaveTotal"),
+  leaveTotalDetail: el("leaveTotalDetail"),
+  leaveUsed: el("leaveUsed"),
+  leavePending: el("leavePending"),
+  leaveRemaining: el("leaveRemaining"),
+  leaveBar: el("leaveBar"),
+  leaveOther: el("leaveOther"),
+  payMonth: el("payMonth"),
+  payPrint: el("payPrint"),
+  payBody: el("payBody"),
+  payTotal: el("payTotal"),
+  payDaysDetail: el("payDaysDetail"),
+  payItemForm: el("payItemForm"),
+  payItemKind: el("payItemKind"),
+  payItemDays: el("payItemDays"),
+  payItemDaysWrap: el("payItemDaysWrap"),
+  payItemAmount: el("payItemAmount"),
+  payItemAmountWrap: el("payItemAmountWrap"),
+  payItemDesc: el("payItemDesc"),
+  payStatus: el("payStatus"),
 
   // template
   metricTemplate: el("metricCardTemplate")
@@ -189,6 +236,9 @@ function bindEvents() {
 
   // Admin: crea utente
   if (refs.createUserForm) refs.createUserForm.addEventListener("submit", handleCreateUser);
+
+  // Admin: schede dipendente
+  bindEmployeeSheetEvents();
 
   // Period
   refs.periodPreset.addEventListener("change", handlePresetChange);
@@ -407,8 +457,19 @@ async function refreshData() {
     state.requests = requestsResult.data.map(normalizeRequest);
   }
 
+  if (state.profile.role === "admin") {
+    const payResult = await fetchEmployeePay();
+    if (payResult.error) {
+      console.error(payResult.error);
+    } else {
+      state.payData = Object.fromEntries(payResult.data.map((r) => [r.employee_id, r]));
+    }
+  }
+
   populateEmployeeOptions();
   render();
+
+  if (state.profile.role === "admin") await loadPayItems();
 }
 
 async function fetchProfiles() {
@@ -518,7 +579,7 @@ function populateEmployeeOptions() {
 function syncRoleUI() {
   const role = state.profile?.role;
   const allowed = role === "admin"
-    ? ["dashboard", "approvals", "history", "team", "users"]
+    ? ["dashboard", "approvals", "history", "team", "employees", "users"]
     : ["request", "history"];
 
   if (role && !allowed.includes(state.activeView)) {
@@ -548,6 +609,7 @@ function render() {
   renderHistory();
   renderTeam();
   renderUsers();
+  renderEmployeeSheet();
   renderQuotaChip();
   updateWorkingDaysPreview();
   updateBadges();
@@ -1008,6 +1070,386 @@ async function handleCreateUser(event) {
   } finally {
     submitButton.disabled = false;
   }
+}
+
+// =====================================================================
+// ADMIN: SCHEDE DIPENDENTE + SIMULAZIONE PAYSLIP
+// =====================================================================
+
+const WORKING_DAYS_PER_YEAR = 260;
+const eur = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
+const fmtEur = (v) => eur.format(Number(v) || 0);
+const fmtDays = (v) => (Math.round((Number(v) || 0) * 100) / 100).toLocaleString("it-IT");
+
+function bindEmployeeSheetEvents() {
+  if (!refs.empSelect) return;
+
+  const now = new Date();
+  state.payMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  refs.payMonth.value = state.payMonth;
+
+  refs.empSelect.addEventListener("change", async () => {
+    state.selectedEmployeeId = refs.empSelect.value;
+    setStatus(refs.empStatus, "");
+    setStatus(refs.payStatus, "");
+    renderEmployeeSheet();
+    await loadPayItems();
+  });
+
+  refs.payMonth.addEventListener("change", async () => {
+    if (!refs.payMonth.value) return;
+    state.payMonth = refs.payMonth.value;
+    renderEmployeeSheet();
+    await loadPayItems();
+  });
+
+  refs.empForm.addEventListener("submit", saveEmployeeSheet);
+
+  refs.empRateFromSalary.addEventListener("click", () => {
+    const salary = Number(refs.empSalary.value);
+    if (salary > 0) refs.empRate.value = (salary / WORKING_DAYS_PER_YEAR).toFixed(2);
+  });
+
+  refs.payItemKind.addEventListener("change", syncPayItemForm);
+  refs.payItemForm.addEventListener("submit", addPayItem);
+  refs.payPrint.addEventListener("click", printPayslip);
+
+  refs.payBody.addEventListener("click", async (event) => {
+    const btn = event.target.closest("[data-delete-item]");
+    if (!btn) return;
+    if (!confirm("Eliminare questa voce?")) return;
+    const { error } = await supabaseClient.from("payslip_items").delete().eq("id", btn.dataset.deleteItem);
+    if (error) return setStatus(refs.payStatus, payTableError(error), "error");
+    await loadPayItems();
+  });
+
+  syncPayItemForm();
+}
+
+async function fetchEmployeePay() {
+  return supabaseClient
+    .from("employee_pay")
+    .select("employee_id, job_title, department, contract_start, annual_salary, daily_rate, notes");
+}
+
+function payTableError(error) {
+  if (/relation .* does not exist|schema cache|employee_pay|payslip_items/i.test(error.message || "")) {
+    return "Tabelle mancanti: esegui supabase_payroll.sql nel SQL Editor di Supabase.";
+  }
+  return error.message;
+}
+
+function getPay(employeeId) {
+  const r = state.payData[employeeId] || {};
+  return {
+    jobTitle: r.job_title || "",
+    department: r.department || "",
+    contractStart: r.contract_start || "",
+    annualSalary: Number(r.annual_salary) || 0,
+    dailyRate: Number(r.daily_rate) || 0,
+    notes: r.notes || ""
+  };
+}
+
+function monthBounds(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const start = `${y}-${String(m).padStart(2, "0")}-01`;
+  const last = new Date(y, m, 0).getDate();
+  const end = `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+  return { year: y, month: m, start, end };
+}
+
+// Giorni lavorativi di una richiesta che cadono dentro [from, to]
+function clippedWorkingDays(req, from, to) {
+  const s = req.startDate > from ? req.startDate : from;
+  const e = req.endDate < to ? req.endDate : to;
+  return e < s ? 0 : countWorkingDays(s, e);
+}
+
+function sumDays(employeeId, from, to, { type, status }) {
+  return state.requests
+    .filter((r) => r.employeeId === employeeId &&
+                   (!type || r.type === type) &&
+                   (!status || r.status === status))
+    .reduce((sum, r) => sum + clippedWorkingDays(r, from, to), 0);
+}
+
+function computeLeaveBalance(employee, pay, year) {
+  const quota = employee.annualQuota ?? DEFAULT_QUOTA;
+  const from = `${year}-01-01`;
+  const to = `${year}-12-31`;
+
+  // Pro-rata se il contratto inizia durante l'anno (mesi interi dal mese di inizio)
+  let months = 12;
+  if (pay.contractStart) {
+    const [cy, cm] = pay.contractStart.split("-").map(Number);
+    if (cy > year) months = 0;
+    else if (cy === year) months = 12 - cm + 1;
+  }
+  const total = Math.round(((quota * months) / 12) * 2) / 2;
+
+  const used = sumDays(employee.id, from, to, { type: "Ferie", status: "Approved" });
+  const pending = sumDays(employee.id, from, to, { type: "Ferie", status: "Pending" });
+  const permessi = sumDays(employee.id, from, to, { type: "Permesso", status: "Approved" });
+  const malattia = sumDays(employee.id, from, to, { type: "Malattia", status: "Approved" });
+
+  return { quota, months, total, used, pending, permessi, malattia, remaining: total - used };
+}
+
+function computePayslip(employee, pay, ym) {
+  const { start, end } = monthBounds(ym);
+  const effStart = pay.contractStart && pay.contractStart > start ? pay.contractStart : start;
+  const notStarted = pay.contractStart && pay.contractStart > end;
+
+  const workingDays = notStarted ? 0 : countWorkingDays(effStart, end);
+  const absence = (type) => notStarted ? 0
+    : sumDays(employee.id, effStart, end, { type, status: "Approved" });
+  const ferie = absence("Ferie");
+  const permessi = absence("Permesso");
+  const malattia = absence("Malattia");
+  const worked = Math.max(workingDays - ferie - permessi - malattia, 0);
+
+  const base = worked * pay.dailyRate;
+  const bonus = state.payItems.reduce((s, i) => s + Number(i.amount || 0), 0);
+
+  return { start, end, effStart, workingDays, ferie, permessi, malattia, worked, base, bonus, total: base + bonus };
+}
+
+function renderEmployeeSheet() {
+  if (!refs.empSelect || state.profile?.role !== "admin") return;
+
+  const employees = state.employees;
+  refs.empEmpty.classList.toggle("hidden", employees.length > 0);
+  refs.empSheet.classList.toggle("hidden", employees.length === 0);
+  if (!employees.length) return;
+
+  if (!employees.some((e) => e.id === state.selectedEmployeeId)) {
+    state.selectedEmployeeId = employees[0].id;
+  }
+
+  refs.empSelect.innerHTML = employees.map((e) =>
+    `<option value="${e.id}" ${e.id === state.selectedEmployeeId ? "selected" : ""}>${escapeHtml(e.fullName)}</option>`
+  ).join("");
+
+  const departments = [...new Set(Object.values(state.payData).map((r) => r.department).filter(Boolean))].sort();
+  refs.departmentList.innerHTML = departments.map((d) => `<option value="${escapeHtml(d)}"></option>`).join("");
+
+  const employee = getEmployeeById(state.selectedEmployeeId);
+  const pay = getPay(employee.id);
+
+  // Intestazione
+  refs.empName.textContent = employee.fullName;
+  refs.empMeta.textContent = [
+    pay.jobTitle || "Ruolo non impostato",
+    pay.department || "Dipartimento non impostato",
+    employee.email,
+    pay.contractStart ? `dal ${formatDate(pay.contractStart)}` : null
+  ].filter(Boolean).join(" · ");
+
+  // Form (non sovrascrivere mentre l'admin sta scrivendo)
+  if (!refs.empForm.contains(document.activeElement) || refs.empForm.dataset.for !== employee.id) {
+    refs.empForm.dataset.for = employee.id;
+    refs.empJobTitle.value = pay.jobTitle;
+    refs.empDepartment.value = pay.department;
+    refs.empContractStart.value = pay.contractStart;
+    refs.empSalary.value = pay.annualSalary || "";
+    refs.empRate.value = pay.dailyRate || "";
+    refs.empQuota.value = employee.annualQuota ?? DEFAULT_QUOTA;
+    refs.empNotes.value = pay.notes;
+  }
+
+  // Saldo ferie (anno del mese selezionato)
+  const year = Number(state.payMonth.slice(0, 4));
+  const lb = computeLeaveBalance(employee, pay, year);
+  refs.leaveYearLabel.textContent = year;
+  refs.leaveTotal.textContent = `${fmtDays(lb.total)} gg`;
+  refs.leaveTotalDetail.textContent = lb.months < 12
+    ? `Pro-rata ${lb.months}/12 di ${lb.quota} gg`
+    : `Quota annua ${lb.quota} gg`;
+  refs.leaveUsed.textContent = `${fmtDays(lb.used)} gg`;
+  refs.leavePending.textContent = `${fmtDays(lb.pending)} gg`;
+  refs.leaveRemaining.textContent = `${fmtDays(lb.remaining)} gg`;
+  refs.leaveRemaining.classList.toggle("negative", lb.remaining < 0);
+  refs.leaveBar.style.width = `${lb.total ? Math.min(100, Math.round((lb.used / lb.total) * 100)) : 0}%`;
+  refs.leaveOther.textContent = `Altre assenze approvate nell'anno: Permessi ${fmtDays(lb.permessi)} gg · Malattia ${fmtDays(lb.malattia)} gg`;
+
+  refs.kpiRate.textContent = pay.dailyRate ? fmtEur(pay.dailyRate) : "-";
+  refs.kpiSalary.textContent = pay.annualSalary ? fmtEur(pay.annualSalary) : "-";
+  refs.kpiLeave.textContent = `${fmtDays(lb.remaining)} gg`;
+
+  renderPayslip(employee, pay);
+}
+
+function renderPayslip(employee, pay) {
+  const ps = computePayslip(employee, pay, state.payMonth);
+
+  const rows = [`
+    <tr>
+      <td>Retribuzione giorni lavorati</td>
+      <td class="num">${fmtDays(ps.worked)}</td>
+      <td class="num">${fmtEur(pay.dailyRate)}</td>
+      <td class="num">${fmtEur(ps.base)}</td>
+      <td></td>
+    </tr>`];
+
+  state.payItems.forEach((i) => {
+    rows.push(`
+      <tr>
+        <td><span class="badge ${i.kind === "Rimborso" ? "neutral" : "Approved"}">${escapeHtml(i.kind)}</span>
+            ${i.description ? `<span class="muted"> ${escapeHtml(i.description)}</span>` : ""}</td>
+        <td class="num">${i.days != null ? fmtDays(i.days) : ""}</td>
+        <td class="num">${i.days != null && Number(i.days) ? fmtEur(i.amount / i.days) : ""}</td>
+        <td class="num">${fmtEur(i.amount)}</td>
+        <td class="num"><button type="button" class="action-button reject" data-delete-item="${i.id}" title="Elimina">✕</button></td>
+      </tr>`);
+  });
+
+  refs.payBody.innerHTML = rows.join("");
+  refs.payTotal.textContent = fmtEur(ps.total);
+
+  const parts = [`Giorni lavorativi nel mese: ${ps.workingDays}`];
+  if (ps.effStart !== ps.start) parts[0] += ` (dal ${formatDate(ps.effStart)}, inizio contratto)`;
+  parts.push(`Ferie ${fmtDays(ps.ferie)}`, `Permessi ${fmtDays(ps.permessi)}`, `Malattia ${fmtDays(ps.malattia)}`);
+  parts.push(`→ Giorni lavorati ${fmtDays(ps.worked)}`);
+  refs.payDaysDetail.textContent = parts.join(" · ") +
+    (pay.dailyRate ? "" : " — Imposta il daily rate nei dati contrattuali.");
+
+  // Suggerisci i giorni di ferie del mese quando si sceglie "Ferie pagate"
+  if (refs.payItemKind.value === "Ferie pagate" && document.activeElement !== refs.payItemDays) {
+    refs.payItemDays.placeholder = ps.ferie ? `${fmtDays(ps.ferie)} (ferie del mese)` : "";
+  }
+  state.lastPayslip = { employee, pay, ps };
+}
+
+function syncPayItemForm() {
+  const isFerie = refs.payItemKind.value === "Ferie pagate";
+  refs.payItemDaysWrap.classList.toggle("hidden", !isFerie);
+  refs.payItemAmountWrap.classList.toggle("hidden", isFerie);
+}
+
+async function loadPayItems() {
+  if (!supabaseClient || state.profile?.role !== "admin" || !state.selectedEmployeeId) return;
+  const { start } = monthBounds(state.payMonth);
+  const { data, error } = await supabaseClient
+    .from("payslip_items")
+    .select("id, kind, description, days, amount, created_at")
+    .eq("employee_id", state.selectedEmployeeId)
+    .eq("month", start)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    state.payItems = [];
+    setStatus(refs.payStatus, payTableError(error), "error");
+  } else {
+    state.payItems = data;
+  }
+  renderEmployeeSheet();
+}
+
+async function saveEmployeeSheet(event) {
+  event.preventDefault();
+  const employee = getEmployeeById(state.selectedEmployeeId);
+  if (!employee) return;
+
+  const row = {
+    employee_id: employee.id,
+    job_title: refs.empJobTitle.value.trim(),
+    department: refs.empDepartment.value.trim(),
+    contract_start: refs.empContractStart.value || null,
+    annual_salary: Number(refs.empSalary.value) || 0,
+    daily_rate: Number(refs.empRate.value) || 0,
+    notes: refs.empNotes.value.trim(),
+    updated_at: new Date().toISOString()
+  };
+  const quota = Number(refs.empQuota.value);
+
+  setStatus(refs.empStatus, "Salvataggio…");
+  const { error } = await supabaseClient.from("employee_pay").upsert(row);
+  if (error) return setStatus(refs.empStatus, payTableError(error), "error");
+
+  if (Number.isFinite(quota) && quota !== employee.annualQuota) {
+    const res = await supabaseClient.from("profiles").update({ annual_quota: quota }).eq("id", employee.id);
+    if (res.error) return setStatus(refs.empStatus, res.error.message, "error");
+  }
+
+  setStatus(refs.empStatus, "Scheda salvata.", "success");
+  refs.empForm.dataset.for = "";
+  await refreshData();
+}
+
+async function addPayItem(event) {
+  event.preventDefault();
+  const employee = getEmployeeById(state.selectedEmployeeId);
+  if (!employee) return;
+  const pay = getPay(employee.id);
+  const kind = refs.payItemKind.value;
+
+  let days = null;
+  let amount;
+  if (kind === "Ferie pagate") {
+    const suggested = state.lastPayslip?.ps.ferie || 0;
+    days = refs.payItemDays.value === "" ? suggested : Number(refs.payItemDays.value);
+    if (!days) return setStatus(refs.payStatus, "Inserisci i giorni di ferie da pagare.", "error");
+    if (!pay.dailyRate) return setStatus(refs.payStatus, "Imposta prima il daily rate.", "error");
+    amount = Math.round(days * pay.dailyRate * 100) / 100;
+  } else {
+    amount = Number(refs.payItemAmount.value);
+    if (!amount) return setStatus(refs.payStatus, "Inserisci l'importo del rimborso.", "error");
+  }
+
+  const { error } = await supabaseClient.from("payslip_items").insert({
+    employee_id: employee.id,
+    month: monthBounds(state.payMonth).start,
+    kind,
+    description: refs.payItemDesc.value.trim(),
+    days,
+    amount
+  });
+  if (error) return setStatus(refs.payStatus, payTableError(error), "error");
+
+  refs.payItemForm.reset();
+  syncPayItemForm();
+  setStatus(refs.payStatus, "Voce aggiunta.", "success");
+  await loadPayItems();
+}
+
+function printPayslip() {
+  const ctx = state.lastPayslip;
+  if (!ctx) return;
+  const { employee, pay, ps } = ctx;
+  const monthLabel = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric" })
+    .format(new Date(`${ps.start}T12:00:00`));
+
+  const w = window.open("", "_blank");
+  if (!w) return alert("Consenti i popup per stampare la busta paga.");
+  w.document.write(`<!doctype html><html lang="it"><head><meta charset="utf-8">
+    <title>Payslip ${escapeHtml(employee.fullName)} - ${monthLabel}</title>
+    <style>
+      body{font-family:Inter,Arial,sans-serif;color:#0f1a2e;margin:40px;font-size:13px}
+      h1{font-size:20px;margin:0 0 4px} .muted{color:#6b7a94}
+      .sim{display:inline-block;margin-top:6px;padding:2px 8px;border-radius:4px;background:#fff5e0;color:#d68200;font-weight:600;font-size:11px}
+      dl{display:grid;grid-template-columns:160px 1fr;gap:4px 12px;margin:20px 0}
+      dt{color:#6b7a94} dd{margin:0}
+      table{width:100%;border-collapse:collapse;margin-top:10px}
+      th,td{padding:8px;border-bottom:1px solid #e4e9f1;text-align:left}
+      th{background:#f0f3f8;font-size:11px;text-transform:uppercase;color:#6b7a94}
+      .num{text-align:right} tfoot td{font-weight:700;border-top:2px solid #0f1a2e}
+    </style></head><body>
+    <h1>Marathonbet Italia — Busta paga ${monthLabel}</h1>
+    <span class="sim">SIMULAZIONE — importi lordi, documento non ufficiale</span>
+    <dl>
+      <dt>Dipendente</dt><dd>${escapeHtml(employee.fullName)}</dd>
+      <dt>Ruolo</dt><dd>${escapeHtml(pay.jobTitle || "-")}</dd>
+      <dt>Dipartimento</dt><dd>${escapeHtml(pay.department || "-")}</dd>
+      <dt>Inizio contratto</dt><dd>${pay.contractStart ? formatDate(pay.contractStart) : "-"}</dd>
+      <dt>Daily rate</dt><dd>${fmtEur(pay.dailyRate)}</dd>
+      <dt>Giorni lavorativi mese</dt><dd>${ps.workingDays} (ferie ${fmtDays(ps.ferie)}, permessi ${fmtDays(ps.permessi)}, malattia ${fmtDays(ps.malattia)})</dd>
+    </dl>
+    ${refs.payBody.closest("table").outerHTML.replace(/<button[^>]*>.*?<\/button>/g, "")}
+    <p class="muted">Generato il ${formatDate(new Date())}</p>
+    <script>window.onload=()=>window.print()<\/script>
+    </body></html>`);
+  w.document.close();
 }
 
 function setStatus(node, text, kind = "") {

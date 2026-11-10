@@ -683,6 +683,68 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 }
 
 /* =================================================================
+   SCHEDE DIPENDENTE
+================================================================= */
+.badge.neutral  { background: var(--info-soft); color: #274a9d; }
+
+.emp-picker { display: grid; gap: 6px; min-width: 240px; }
+.emp-picker span { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+
+.emp-sheet { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+.emp-sheet .two-col > * { min-width: 0; }
+
+.emp-identity {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.emp-identity h2 { font-size: 1.35rem; margin: 0 0 4px; }
+
+.emp-kpis { display: flex; gap: 28px; flex-wrap: wrap; }
+.emp-kpis > div { display: grid; gap: 2px; }
+.emp-kpis strong { font-size: 1.15rem; }
+
+.emp-hint { justify-self: start; padding: 0; font-size: 0.8rem; }
+
+.leave-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.metric-value.negative { color: var(--danger); }
+#leaveOther { margin-top: 10px; }
+
+#payslipCard .card-head { flex-wrap: wrap; }
+.payslip-tools input { width: auto; }
+.payslip-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.payslip-table { min-width: 560px; }
+.payslip-table .num { text-align: right; white-space: nowrap; }
+.payslip-table tfoot td { font-weight: 700; border-top: 2px solid var(--ink); background: var(--surface-2); }
+#payDaysDetail { margin: 10px 0 16px; }
+
+.pay-item-form {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.pay-item-form label { display: grid; gap: 6px; min-width: 120px; }
+.pay-item-form label.grow { flex: 1; min-width: 200px; }
+.pay-item-form span { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+#payStatus { margin-top: 8px; }
+
+@media (max-width: 860px) {
+  .emp-picker { min-width: 0; width: 100%; }
+  .page-head:has(.emp-picker) { flex-direction: column; align-items: stretch; }
+  .leave-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* =================================================================
    RESPONSIVE
 ================================================================= */
 @media (max-width: 860px) {
