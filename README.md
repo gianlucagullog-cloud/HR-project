@@ -42,7 +42,8 @@ Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
 - **Saldo ferie su anno solare** (1 gennaio – 31 dicembre, nessun riporto): pulsanti *Azzera godute* (riparte solo il contatore, richieste e fatture invariate; annullabile) e *Azzera in attesa* (rifiuta le richieste di ferie pendenti).
 - **Validazione mensile**: *Valida importo* congela l'importo del mese (tabella `payslip_validations`); il mese non è più modificabile finché non annulli la validazione.
 - **Fatturato**: tabella mesi dell'anno (simulato / validato / stato), totale validato nell'anno, da validare, totale complessivo.
-- Si inserisce il **daily rate**; il salario annuo è calcolato come daily rate × 228. Si pagano solo i giorni lavorati; le ferie non sono retribuite.
+- **Tipo di compenso** per dipendente: *Daily rate × giorni lavorati* oppure *Salario fisso annuo* fatturato 1/12 al mese (pro-rata solo nel mese di inizio contratto, assenze non scalate).
+- Con il daily rate il salario annuo è calcolato come daily rate × 228. Si pagano solo i giorni lavorati; le ferie non sono retribuite.
 - **Dati di fatturazione** per dipendente: intestatario, email per le fatture, indirizzo, P.IVA / codice fiscale.
 - **Dati bancari**: intestatario conto, banca, IBAN (con controllo di validità), BIC/SWIFT; riportati nel PDF e nella mail della fattura.
 - **Invia fattura** (solo mesi validati): scarica il PDF del prospetto e apre una nuova email nel programma di posta predefinito (es. Outlook) già compilata; il portale registra data e destinatario dell'invio.

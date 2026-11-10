@@ -115,6 +115,10 @@ const refs = {
   empName: el("empName"),
   empMeta: el("empMeta"),
   kpiRate: el("kpiRate"),
+  kpiRateLabel: el("kpiRateLabel"),
+  empPayType: el("empPayType"),
+  empRateLabel: el("empRateLabel"),
+  empRateSub: el("empRateSub"),
   kpiSalary: el("kpiSalary"),
   kpiLeave: el("kpiLeave"),
   empForm: el("empForm"),
@@ -1200,6 +1204,8 @@ function bindEmployeeSheetEvents() {
   refs.empForm.addEventListener("submit", saveEmployeeSheet);
 
   refs.empRate.addEventListener("input", syncSalaryField);
+  refs.empSalary.addEventListener("input", syncSalaryField);
+  refs.empPayType.addEventListener("change", syncSalaryField);
   refs.empIban.addEventListener("input", syncIbanHint);
   refs.empIban.addEventListener("blur", () => { refs.empIban.value = formatIban(refs.empIban.value); });
 
@@ -1262,8 +1268,13 @@ function getPay(employeeId) {
     jobTitle: r.job_title || "",
     department: r.department || "",
     contractStart: r.contract_start || "",
-    dailyRate: Number(r.daily_rate) || 0,
-    annualSalary: annualFromRate(r.daily_rate),
+    payType: r.pay_type === "fixed" ? "fixed" : "daily",
+    // fisso: salario inserito, daily rate = equivalente giornaliero (÷ 228)
+    // daily: daily rate inserito, salario = daily rate × 228
+    dailyRate: r.pay_type === "fixed"
+      ? (Number(r.annual_salary) || 0) / ANNUAL_PAID_DAYS
+      : Number(r.daily_rate) || 0,
+    annualSalary: r.pay_type === "fixed" ? Number(r.annual_salary) || 0 : annualFromRate(r.daily_rate),
     notes: r.notes || "",
     billingName: r.billing_name || "",
     billingEmail: r.billing_email || "",
@@ -1341,12 +1352,24 @@ function computePayslip(employee, pay, ym) {
   const paidFerie = 0;
   const unpaidFerie = ferie;
 
-  const base = worked * rate;
+  // Compenso base
+  let base, fixedMonthly = 0, fixedRatio = 1;
+  if (pay.payType === "fixed") {
+    // Fisso: 1/12 del salario annuo, in proporzione ai giorni lavorativi
+    // solo nel mese in cui inizia il contratto. Assenze non scalate.
+    fixedMonthly = pay.annualSalary / 12;
+    const monthWorkingDays = countWorkingDays(start, end);
+    fixedRatio = notStarted ? 0 : monthWorkingDays ? workingDays / monthWorkingDays : 0;
+    base = fixedMonthly * fixedRatio;
+  } else {
+    base = worked * rate;
+  }
   const ferieAmount = 0;
   const items = itemsForMonth(start);
   const bonus = items.reduce((s, i) => s + Number(i.amount || 0), 0);
 
   return {
+    payType: pay.payType, fixedMonthly, fixedRatio,
     year, rate, start, end, effStart, workingDays, ferie, paidFerie, unpaidFerie,
     permessi, malattia, worked, base, ferieAmount, bonus, items,
     total: Math.round((base + ferieAmount + bonus) * 100) / 100
@@ -1381,9 +1404,27 @@ function syncIbanHint() {
 }
 
 function syncSalaryField() {
-  const rate = Number(refs.empRate.value);
-  refs.empSalary.value = rate > 0 ? annualFromRate(rate).toFixed(2) : "";
-  refs.empRateHint.textContent = `Calcolato: daily rate × ${ANNUAL_PAID_DAYS} giorni`;
+  const fixed = refs.empPayType.value === "fixed";
+  refs.empRate.readOnly = fixed;
+  refs.empRate.tabIndex = fixed ? -1 : 0;
+  refs.empSalary.readOnly = !fixed;
+  refs.empSalary.tabIndex = fixed ? 0 : -1;
+
+  if (fixed) {
+    const salary = Number(refs.empSalary.value);
+    refs.empRateLabel.textContent = "Equivalente giornaliero (€)";
+    refs.empRate.value = salary > 0 ? (salary / ANNUAL_PAID_DAYS).toFixed(2) : "";
+    refs.empRateSub.textContent = `Salario ÷ ${ANNUAL_PAID_DAYS}: usato solo per liquidare ferie non godute`;
+    refs.empRateHint.textContent = salary > 0
+      ? `Fatturato ogni mese: ${fmtEur(salary / 12)} (1/12)`
+      : "Inserisci il salario fisso annuo";
+  } else {
+    const rate = Number(refs.empRate.value);
+    refs.empRateLabel.textContent = "Daily rate (€)";
+    refs.empRateSub.textContent = "";
+    refs.empSalary.value = rate > 0 ? annualFromRate(rate).toFixed(2) : "";
+    refs.empRateHint.textContent = `Calcolato: daily rate × ${ANNUAL_PAID_DAYS} giorni`;
+  }
 }
 
 function renderEmployeeSheet() {
@@ -1423,7 +1464,9 @@ function renderEmployeeSheet() {
     refs.empJobTitle.value = pay.jobTitle;
     refs.empDepartment.value = pay.department;
     refs.empContractStart.value = pay.contractStart;
-    refs.empRate.value = pay.dailyRate || "";
+    refs.empPayType.value = pay.payType;
+    refs.empRate.value = pay.payType === "daily" ? (pay.dailyRate || "") : "";
+    refs.empSalary.value = pay.payType === "fixed" ? (pay.annualSalary || "") : "";
     syncSalaryField();
     refs.empQuota.value = employee.annualQuota ?? DEFAULT_QUOTA;
     refs.empNotes.value = pay.notes;
@@ -1460,7 +1503,13 @@ function renderEmployeeSheet() {
   refs.leaveOther.textContent = `Altre assenze approvate nell'anno: Permessi ${fmtDays(lb.permessi)} gg · Malattia ${fmtDays(lb.malattia)} gg`;
 
   const rate = effectiveRate(pay, year);
-  refs.kpiRate.textContent = rate ? fmtEur(rate) : "-";
+  if (pay.payType === "fixed") {
+    refs.kpiRateLabel.textContent = "Fisso mensile";
+    refs.kpiRate.textContent = pay.annualSalary ? fmtEur(pay.annualSalary / 12) : "-";
+  } else {
+    refs.kpiRateLabel.textContent = "Daily rate";
+    refs.kpiRate.textContent = rate ? fmtEur(rate) : "-";
+  }
   refs.kpiSalary.textContent = pay.annualSalary ? fmtEur(pay.annualSalary) : "-";
   refs.kpiLeave.textContent = `${fmtDays(lb.remaining)} gg`;
 
@@ -1470,7 +1519,15 @@ function renderEmployeeSheet() {
 function renderPayslip(employee, pay) {
   const ps = computePayslip(employee, pay, state.payMonth);
 
-  const rows = [`
+  const fixed = ps.payType === "fixed";
+  const rows = [fixed ? `
+    <tr>
+      <td>Compenso fisso mensile${ps.fixedRatio < 1 ? ` (${fmtDays(ps.workingDays)}/${countWorkingDays(ps.start, ps.end)} gg, inizio contratto)` : ""}</td>
+      <td class="num"></td>
+      <td class="num">${fmtEur(ps.fixedMonthly)}</td>
+      <td class="num">${fmtEur(ps.base)}</td>
+      <td></td>
+    </tr>` : `
     <tr>
       <td>Retribuzione giorni lavorati</td>
       <td class="num">${fmtDays(ps.worked)}</td>
@@ -1479,7 +1536,7 @@ function renderPayslip(employee, pay) {
       <td></td>
     </tr>`];
 
-  if (ps.ferie) {
+  if (ps.ferie && !fixed) {
     rows.push(`
       <tr class="pay-info">
         <td>Ferie godute (non retribuite)</td>
@@ -1511,9 +1568,13 @@ function renderPayslip(employee, pay) {
   if (ps.effStart !== ps.start) parts[0] += ` (dal ${formatDate(ps.effStart)}, inizio contratto)`;
   parts.push(`Ferie ${fmtDays(ps.ferie)}`, `Permessi ${fmtDays(ps.permessi)}`, `Malattia ${fmtDays(ps.malattia)}`);
   parts.push(`→ Giorni lavorati ${fmtDays(ps.worked)}`);
-  const rateNote = pay.annualSalary > 0
-    ? ` Salario annuo = ${fmtEur(ps.rate)} × ${ANNUAL_PAID_DAYS} giorni = ${fmtEur(pay.annualSalary)}.`
-    : " — Imposta il daily rate nei dati contrattuali.";
+  const rateNote = fixed
+    ? (pay.annualSalary > 0
+        ? ` Salario fisso: ${fmtEur(pay.annualSalary)} ÷ 12 = ${fmtEur(ps.fixedMonthly)} al mese; ferie, permessi e malattia non riducono il compenso.`
+        : " — Imposta il salario fisso annuo nei dati contrattuali.")
+    : (pay.annualSalary > 0
+        ? ` Salario annuo = ${fmtEur(ps.rate)} × ${ANNUAL_PAID_DAYS} giorni = ${fmtEur(pay.annualSalary)}.`
+        : " — Imposta il daily rate nei dati contrattuali.");
   refs.payDaysDetail.textContent = parts.join(" · ") + "." + rateNote;
   state.lastPayslip = { employee, pay, ps, validation };
 
@@ -1660,6 +1721,8 @@ async function validateMonth() {
     paid_leave: ps.paidFerie,
     bonus_amount: Math.round(ps.bonus * 100) / 100,
     details: {
+      pay_type: ps.payType,
+      fixed_monthly: Math.round(ps.fixedMonthly * 100) / 100,
       working_days: ps.workingDays, ferie: ps.ferie, unpaid_ferie: ps.unpaidFerie,
       permessi: ps.permessi, malattia: ps.malattia,
       base: Math.round(ps.base * 100) / 100, ferie_amount: Math.round(ps.ferieAmount * 100) / 100,
@@ -1742,8 +1805,16 @@ async function saveEmployeeSheet(event) {
     job_title: refs.empJobTitle.value.trim(),
     department: refs.empDepartment.value.trim(),
     contract_start: refs.empContractStart.value || null,
-    daily_rate: Math.round((Number(refs.empRate.value) || 0) * 100) / 100,
-    annual_salary: annualFromRate(refs.empRate.value),
+    pay_type: refs.empPayType.value === "fixed" ? "fixed" : "daily",
+    ...(refs.empPayType.value === "fixed"
+      ? {
+          annual_salary: Math.round((Number(refs.empSalary.value) || 0) * 100) / 100,
+          daily_rate: Math.round(((Number(refs.empSalary.value) || 0) / ANNUAL_PAID_DAYS) * 100) / 100
+        }
+      : {
+          daily_rate: Math.round((Number(refs.empRate.value) || 0) * 100) / 100,
+          annual_salary: annualFromRate(refs.empRate.value)
+        }),
     notes: refs.empNotes.value.trim(),
     billing_name: refs.empBillingName.value.trim(),
     billing_email: refs.empBillingEmail.value.trim(),
@@ -1879,6 +1950,17 @@ async function loadPdfLib() {
 function invoiceLines(v) {
   const d = v.details || {};
   const rate = Number(v.daily_rate) || 0;
+  if (d.pay_type === "fixed") {
+    const lines = [{ desc: "Compenso fisso mensile", days: null, rate: null, amount: Number(d.base) || 0 }];
+    (d.items || []).forEach((i) => lines.push({
+      desc: (i.kind === "Ferie pagate" ? "Ferie non godute (liquidazione)" : i.kind) +
+            (i.description ? ` - ${i.description}` : ""),
+      days: i.days != null ? Number(i.days) : null,
+      rate: i.days ? Number(i.amount) / Number(i.days) : null,
+      amount: Number(i.amount) || 0
+    }));
+    return lines;
+  }
   const lines = [{
     desc: "Compenso giorni lavorati",
     days: Number(v.worked_days) || 0,
