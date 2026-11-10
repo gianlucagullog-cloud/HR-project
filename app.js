@@ -1135,15 +1135,19 @@ async function handleCreateUser(event) {
 // ADMIN: SCHEDE DIPENDENTE + SIMULAZIONE PAYSLIP
 // =====================================================================
 
-// Giorni lavorativi (lun-ven) dell'anno: base di calcolo del daily rate.
-// Principio: daily rate × tutti i giorni lavorativi dell'anno (ferie fino
-// alla quota comprese, perché retribuite) = salario annuo lordo.
+// Principio: daily rate × 228 giorni = salario annuo lordo.
+// Si pagano solo i giorni lavorati: le ferie non sono retribuite, quindi chi
+// gode tutte le ferie (es. 2026: 261 gg lavorativi − 33 ferie = 228) incassa
+// esattamente il salario annuo indicato.
+const ANNUAL_PAID_DAYS = 228;
+
+// Giorni lavorativi (lun-ven) dell'anno
 function workingDaysInYear(year) {
   return countWorkingDays(`${year}-01-01`, `${year}-12-31`);
 }
 
 function effectiveRate(pay, year) {
-  if (pay.annualSalary > 0) return pay.annualSalary / workingDaysInYear(year);
+  if (pay.annualSalary > 0) return pay.annualSalary / ANNUAL_PAID_DAYS;
   return pay.dailyRate; // nessun salario: daily rate inserito a mano
 }
 
@@ -1308,17 +1312,12 @@ function computePayslip(employee, pay, ym) {
   const malattia = absence("Malattia");
   const worked = Math.max(workingDays - ferie - permessi - malattia, 0);
 
-  // Ferie retribuite fino a esaurimento della quota annua spettante
-  const entitlement = computeLeaveBalance(employee, pay, year).total;
-  const offset = state.leaveAdj[`${employee.id}|${year}`] || 0;
-  const ferieBefore = Math.max(
-    sumDays(employee.id, `${year}-01-01`, prevDay(start), { type: "Ferie", status: "Approved" }) - offset, 0);
-  const ferieLeft = Math.max(entitlement - ferieBefore, 0);
-  const paidFerie = Math.min(ferie, ferieLeft);
-  const unpaidFerie = ferie - paidFerie;
+  // Ferie non retribuite (il daily rate è già calcolato su 228 giorni)
+  const paidFerie = 0;
+  const unpaidFerie = ferie;
 
   const base = worked * rate;
-  const ferieAmount = paidFerie * rate;
+  const ferieAmount = 0;
   const items = itemsForMonth(start);
   const bonus = items.reduce((s, i) => s + Number(i.amount || 0), 0);
 
@@ -1331,12 +1330,10 @@ function computePayslip(employee, pay, ym) {
 
 function syncRateField() {
   const salary = Number(refs.empSalary.value);
-  const year = Number(state.payMonth.slice(0, 4)) || new Date().getFullYear();
   if (salary > 0) {
-    const days = workingDaysInYear(year);
-    refs.empRate.value = (salary / days).toFixed(2);
+    refs.empRate.value = (salary / ANNUAL_PAID_DAYS).toFixed(2);
     refs.empRate.readOnly = true;
-    refs.empRateHint.textContent = `Calcolato: salario ÷ ${days} giorni lavorativi ${year} (ferie incluse)`;
+    refs.empRateHint.textContent = `Calcolato: salario ÷ ${ANNUAL_PAID_DAYS} giorni (daily rate × ${ANNUAL_PAID_DAYS} = salario annuo)`;
   } else {
     refs.empRate.readOnly = false;
     refs.empRateHint.textContent = "Inserisci il salario annuo per calcolarlo in automatico";
@@ -1428,18 +1425,8 @@ function renderPayslip(employee, pay) {
 
   if (ps.ferie) {
     rows.push(`
-      <tr>
-        <td>Ferie godute (retribuite)</td>
-        <td class="num">${fmtDays(ps.paidFerie)}</td>
-        <td class="num">${fmtEur(ps.rate)}</td>
-        <td class="num">${fmtEur(ps.ferieAmount)}</td>
-        <td></td>
-      </tr>`);
-  }
-  if (ps.unpaidFerie) {
-    rows.push(`
-      <tr class="pay-unpaid">
-        <td>Ferie oltre la quota annua (non retribuite)</td>
+      <tr class="pay-info">
+        <td>Ferie godute (non retribuite)</td>
         <td class="num">${fmtDays(ps.unpaidFerie)}</td>
         <td class="num">${fmtEur(0)}</td>
         <td class="num">${fmtEur(0)}</td>
@@ -1469,7 +1456,7 @@ function renderPayslip(employee, pay) {
   parts.push(`Ferie ${fmtDays(ps.ferie)}`, `Permessi ${fmtDays(ps.permessi)}`, `Malattia ${fmtDays(ps.malattia)}`);
   parts.push(`→ Giorni lavorati ${fmtDays(ps.worked)}`);
   const rateNote = pay.annualSalary > 0
-    ? ` Daily rate = ${fmtEur(pay.annualSalary)} ÷ ${workingDaysInYear(ps.year)} giorni lavorativi ${ps.year}.`
+    ? ` Daily rate = ${fmtEur(pay.annualSalary)} ÷ ${ANNUAL_PAID_DAYS} giorni.`
     : (ps.rate ? "" : " — Imposta il salario annuo nei dati contrattuali.");
   refs.payDaysDetail.textContent = parts.join(" · ") + "." + rateNote;
   state.lastPayslip = { employee, pay, ps, validation };
@@ -1685,7 +1672,7 @@ async function saveEmployeeSheet(event) {
     contract_start: refs.empContractStart.value || null,
     annual_salary: Number(refs.empSalary.value) || 0,
     daily_rate: Math.round((Number(refs.empSalary.value) > 0
-      ? Number(refs.empSalary.value) / workingDaysInYear(new Date().getFullYear())
+      ? Number(refs.empSalary.value) / ANNUAL_PAID_DAYS
       : Number(refs.empRate.value) || 0) * 100) / 100,
     notes: refs.empNotes.value.trim(),
     updated_at: new Date().toISOString()

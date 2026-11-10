@@ -42,7 +42,7 @@ Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
 - **Saldo ferie su anno solare** (1 gennaio – 31 dicembre, nessun riporto): pulsanti *Azzera godute* (riparte solo il contatore, richieste e fatture invariate; annullabile) e *Azzera in attesa* (rifiuta le richieste di ferie pendenti).
 - **Validazione mensile**: *Valida importo* congela l'importo del mese (tabella `payslip_validations`); il mese non è più modificabile finché non annulli la validazione.
 - **Fatturato**: tabella mesi dell'anno (simulato / validato / stato), totale validato nell'anno, da validare, totale complessivo.
-- Il daily rate = salario annuo ÷ giorni lavorativi dell'anno: con tutte le ferie della quota godute, l'anno vale esattamente il salario annuo.
+- Daily rate = salario annuo ÷ 228 (daily rate × 228 = salario annuo). Si pagano solo i giorni lavorati; le ferie non sono retribuite.
 
 Setup una tantum: esegui `supabase_payroll.sql` e poi `supabase_validations.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
 

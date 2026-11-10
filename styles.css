@@ -707,7 +707,7 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .emp-kpis strong { font-size: 1.15rem; }
 
 #empRate[readonly] { background: var(--surface-2); color: var(--ink-2); }
-.payslip-table tr.pay-unpaid td { color: var(--danger); }
+.payslip-table tr.pay-info td { color: var(--muted); }
 
 .leave-grid {
   display: grid;
