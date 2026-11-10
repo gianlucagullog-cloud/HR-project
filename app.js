@@ -115,6 +115,8 @@ const refs = {
   empName: el("empName"),
   empMeta: el("empMeta"),
   kpiRate: el("kpiRate"),
+  kpiRateBox: el("kpiRateBox"),
+  empRateBox: el("empRateBox"),
   kpiRateLabel: el("kpiRateLabel"),
   empPayType: el("empPayType"),
   empRateLabel: el("empRateLabel"),
@@ -1373,11 +1375,9 @@ function computePayslip(employee, pay, ym) {
   // Compenso base
   let base, fixedMonthly = 0, fixedRatio = 1;
   if (pay.payType === "fixed") {
-    // Fisso: 1/12 del salario annuo, in proporzione ai giorni lavorativi
-    // solo nel mese in cui inizia il contratto. Assenze non scalate.
-    fixedMonthly = pay.annualSalary / 12;
-    const monthWorkingDays = countWorkingDays(start, end);
-    fixedRatio = notStarted ? 0 : monthWorkingDays ? workingDays / monthWorkingDays : 0;
+    // Fisso: fattura mensile = salario annuo ÷ 12. Assenze non scalate.
+    fixedMonthly = Math.round((pay.annualSalary / 12) * 100) / 100;
+    fixedRatio = notStarted ? 0 : 1;
     base = fixedMonthly * fixedRatio;
   } else {
     base = worked * rate;
@@ -1428,14 +1428,14 @@ function syncSalaryField() {
   refs.empSalary.readOnly = !fixed;
   refs.empSalary.tabIndex = fixed ? 0 : -1;
 
+  refs.empRateBox.classList.toggle("hidden", fixed);
+
   if (fixed) {
     const salary = Number(refs.empSalary.value);
-    refs.empRateLabel.textContent = "Equivalente giornaliero (€)";
     refs.empRate.value = salary > 0 ? (salary / ANNUAL_PAID_DAYS).toFixed(2) : "";
-    refs.empRateSub.textContent = `Salario ÷ ${ANNUAL_PAID_DAYS}: usato solo per liquidare ferie non godute`;
     refs.empRateHint.textContent = salary > 0
-      ? `Fatturato ogni mese: ${fmtEur(salary / 12)} (1/12)`
-      : "Inserisci il salario fisso annuo";
+      ? `Fattura mensile: ${fmtEur(salary / 12)} (salario ÷ 12)`
+      : "Inserisci il salario annuo";
   } else {
     const rate = Number(refs.empRate.value);
     refs.empRateLabel.textContent = "Daily rate (€)";
@@ -1521,10 +1521,8 @@ function renderEmployeeSheet() {
   refs.leaveOther.textContent = `Altre assenze approvate nell'anno: Permessi ${fmtDays(lb.permessi)} gg · Malattia ${fmtDays(lb.malattia)} gg`;
 
   const rate = effectiveRate(pay, year);
-  if (pay.payType === "fixed") {
-    refs.kpiRateLabel.textContent = "Fisso mensile";
-    refs.kpiRate.textContent = pay.annualSalary ? fmtEur(pay.annualSalary / 12) : "-";
-  } else {
+  refs.kpiRateBox.classList.toggle("hidden", pay.payType === "fixed");
+  if (pay.payType !== "fixed") {
     refs.kpiRateLabel.textContent = "Daily rate";
     refs.kpiRate.textContent = rate ? fmtEur(rate) : "-";
   }
@@ -1540,9 +1538,9 @@ function renderPayslip(employee, pay) {
   const fixed = ps.payType === "fixed";
   const rows = [fixed ? `
     <tr>
-      <td>Compenso fisso mensile${ps.fixedRatio < 1 ? ` (${fmtDays(ps.workingDays)}/${countWorkingDays(ps.start, ps.end)} gg, inizio contratto)` : ""}</td>
+      <td>Compenso mensile (salario annuo ÷ 12)</td>
       <td class="num"></td>
-      <td class="num">${fmtEur(ps.fixedMonthly)}</td>
+      <td class="num"></td>
       <td class="num">${fmtEur(ps.base)}</td>
       <td></td>
     </tr>` : `
@@ -1593,7 +1591,11 @@ function renderPayslip(employee, pay) {
     : (pay.annualSalary > 0
         ? ` Salario annuo = ${fmtEur(ps.rate)} × ${ANNUAL_PAID_DAYS} giorni = ${fmtEur(pay.annualSalary)}.`
         : " — Imposta il daily rate nei dati contrattuali.");
-  refs.payDaysDetail.textContent = parts.join(" · ") + "." + rateNote;
+  refs.payDaysDetail.textContent = fixed
+    ? (pay.annualSalary > 0
+        ? `Salario annuo ${fmtEur(pay.annualSalary)} ÷ 12 = ${fmtEur(ps.fixedMonthly)} al mese. Ferie, permessi e malattia non riducono la fattura.`
+        : "Imposta il salario annuo nei dati contrattuali.")
+    : parts.join(" · ") + "." + rateNote;
   state.lastPayslip = { employee, pay, ps, validation };
 
   // Barra validazione
@@ -1930,7 +1932,9 @@ function printPayslip() {
       <dt>Dipartimento</dt><dd>${escapeHtml(pay.department || "-")}</dd>
       <dt>Inizio contratto</dt><dd>${pay.contractStart ? formatDate(pay.contractStart) : "-"}</dd>
       <dt>Salario annuo lordo</dt><dd>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</dd>
-      <dt>Daily rate</dt><dd>${fmtEur(ps.rate)}</dd>
+      ${ps.payType === "fixed"
+        ? `<dt>Fattura mensile</dt><dd>${fmtEur(ps.fixedMonthly)} (salario annuo ÷ 12)</dd>`
+        : `<dt>Daily rate</dt><dd>${fmtEur(ps.rate)}</dd>`}
       <dt>Giorni lavorativi mese</dt><dd>${ps.workingDays} (ferie ${fmtDays(ps.ferie)}, permessi ${fmtDays(ps.permessi)}, malattia ${fmtDays(ps.malattia)})</dd>
     </dl>
     ${refs.payBody.closest("table").outerHTML.replace(/<button[^>]*>.*?<\/button>/g, "")}
