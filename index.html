@@ -306,7 +306,7 @@
                 <p class="meta-line" id="empMeta">-</p>
               </div>
               <div class="emp-kpis">
-                <div><span class="metric-label" id="kpiRateLabel">Daily rate</span><strong id="kpiRate">-</strong></div>
+                <div id="kpiRateBox"><span class="metric-label" id="kpiRateLabel">Daily rate</span><strong id="kpiRate">-</strong></div>
                 <div><span class="metric-label">Salario annuo</span><strong id="kpiSalary">-</strong></div>
                 <div><span class="metric-label">Ferie residue</span><strong id="kpiLeave">-</strong></div>
               </div>
@@ -336,7 +336,7 @@
                       <option value="fixed">Salario fisso annuo (fatturato mensilmente)</option>
                     </select>
                   </label>
-                  <label>
+                  <label id="empRateBox">
                     <span id="empRateLabel">Daily rate (€)</span>
                     <input type="number" id="empRate" min="0" step="0.01" />
                     <small class="metric-detail" id="empRateSub"></small>
