@@ -336,7 +336,7 @@
                   <label>
                     <span>Daily rate (€)</span>
                     <input type="number" id="empRate" min="0" step="0.01" />
-                    <button type="button" class="link-button emp-hint" id="empRateFromSalary">Calcola da salario annuo (÷ 260 gg)</button>
+                    <small class="metric-detail" id="empRateHint"></small>
                   </label>
                   <label>
                     <span>Quota ferie annua (gg)</span>
@@ -394,7 +394,7 @@
                 <label>
                   <span>Tipo bonus</span>
                   <select id="payItemKind">
-                    <option value="Ferie pagate">Ferie pagate</option>
+                    <option value="Ferie pagate">Ferie non godute (liquidazione)</option>
                     <option value="Rimborso">Rimborso</option>
                   </select>
                 </label>
