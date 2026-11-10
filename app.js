@@ -2183,6 +2183,57 @@ function invoiceMailBody({ employee, pay, v, monthLabel }) {
   ].join("\r\n");
 }
 
+// Email .eml con il PDF già allegato: aperta in Outlook diventa un nuovo messaggio pronto da inviare
+function b64Utf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+
+function wrap76(b64) {
+  return b64.replace(/.{1,76}/g, "$&\r\n").trimEnd();
+}
+
+function buildEml({ to, subject, body, fileName, pdfArrayBuffer }) {
+  const bytes = new Uint8Array(pdfArrayBuffer);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const boundary = `----=_MBI_${Date.now().toString(36)}`;
+  return [
+    `To: ${to}`,
+    `Subject: =?UTF-8?B?${b64Utf8(subject)}?=`,
+    "X-Unsent: 1",
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap76(b64Utf8(body)),
+    "",
+    `--${boundary}`,
+    `Content-Type: application/pdf; name="${fileName}"`,
+    `Content-Disposition: attachment; filename="${fileName}"`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap76(btoa(bin)),
+    "",
+    `--${boundary}--`,
+    ""
+  ].join("\r\n");
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 async function sendInvoice() {
   const ctx = state.lastPayslip;
   const v = ctx && getValidation(state.payMonth);
@@ -2199,28 +2250,31 @@ async function sendInvoice() {
   ].filter(Boolean);
   const warn = missing.length ? `\n\nMancano nella scheda: ${missing.join(", ")}.` : "";
   if (!confirm(`Preparare la fattura di ${monthLabel} (${fmtEur(v.amount)}) per ${to}?\n\n` +
-               `Scarico il PDF e apro una nuova email in Outlook: allega il PDF e premi Invia.${warn}`)) return;
+               `Scarico l'email con il PDF già allegato: aprila (doppio clic) e Outlook la apre pronta, premi Invia.${warn}`)) return;
 
   setStatus(refs.payStatus, "Preparo il PDF…");
-  let fileName;
+  const subject = `Fattura ${monthLabel} - ${pay.billingName || employee.fullName}`;
+  let fileName, emlName;
   try {
     const doc = await buildInvoicePdf({ employee, pay, v, ym: state.payMonth });
     const surname = (pay.billingName || employee.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
     fileName = `${invoiceNumber(state.payMonth)}_${surname}.pdf`;
-    doc.save(fileName);
+    emlName = fileName.replace(/\.pdf$/, ".eml");
+    const eml = buildEml({
+      to, subject, fileName,
+      body: invoiceMailBody({ employee, pay, v, monthLabel }),
+      pdfArrayBuffer: doc.output("arraybuffer")
+    });
+    downloadBlob(new Blob([eml], { type: "message/rfc822" }), emlName);
   } catch (err) {
-    return setStatus(refs.payStatus, `PDF non generato: ${err.message}`, "error");
+    return setStatus(refs.payStatus, `Email non generata: ${err.message}`, "error");
   }
-
-  const subject = `Fattura ${monthLabel} - ${pay.billingName || employee.fullName}`;
-  const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(invoiceMailBody({ employee, pay, v, monthLabel }))}`;
-  window.location.href = mailto;
 
   const { error } = await supabaseClient.from("payslip_validations")
     .update({ sent_at: new Date().toISOString(), sent_to: to })
     .eq("id", v.id);
   if (error) return setStatus(refs.payStatus, payTableError(error), "error");
-  setStatus(refs.payStatus, `PDF "${fileName}" scaricato ed email preparata per ${to}. Allega il PDF in Outlook e invia.`, "success");
+  setStatus(refs.payStatus, `Email "${emlName}" scaricata (PDF ${fileName} già allegato, destinatario ${to}). Aprila con Outlook e premi Invia.`, "success");
   await loadPayItems();
 }
 
