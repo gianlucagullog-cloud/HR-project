@@ -943,6 +943,7 @@ function renderUsers() {
             ` : `
               <button class="action-button approve" data-user-action="activate">Riattiva</button>
             `}
+            ${isSelf ? "" : `<button class="action-button reject" data-user-action="delete" title="Elimina definitivamente">Elimina</button>`}
           </div>
         </td>
       </tr>`;
@@ -958,7 +959,41 @@ function renderUsers() {
   });
 }
 
+async function deleteUser(userId, name) {
+  const ok = confirm(
+    `ELIMINARE DEFINITIVAMENTE ${name}?\n\n` +
+    "Verranno cancellati anche: richieste ferie, scheda dipendente e voci busta paga.\n" +
+    "L'operazione non si può annullare. Se vuoi solo bloccare l'accesso usa \"Disattiva\"."
+  );
+  if (!ok) return;
+
+  const { error } = await supabaseClient.functions.invoke("admin-delete-user", { body: { user_id: userId } });
+  if (error) {
+    let message = error.message;
+    try {
+      const details = await error.context?.json?.();
+      if (details?.error) message = details.error;
+    } catch (_) { /* risposta non JSON */ }
+    if (/Failed to send|not found|404/i.test(message)) {
+      message = "Funzione 'admin-delete-user' non raggiungibile: verifica che sia pubblicata su Supabase.";
+    }
+    alert(`Errore: ${message}`);
+    return;
+  }
+  await refreshData();
+}
+
 async function handleUserAction(userId, action, row) {
+  const user = state.allUsers.find((u) => u.id === userId);
+  const name = user ? `${user.fullName} (${user.email})` : "questo utente";
+
+  if (action === "delete") return deleteUser(userId, name);
+
+  if (action === "disable" && user?.status === "active" &&
+      !confirm(`Disattivare ${name}?\n\nNon potrà più accedere al portale. Dati e storico restano salvati e puoi riattivarlo quando vuoi.`)) {
+    return;
+  }
+
   const role  = row.querySelector('[data-field="role"]').value;
   const quota = parseInt(row.querySelector('[data-field="annual_quota"]').value, 10);
   const patch = {};
