@@ -288,9 +288,44 @@
           <div class="page-head">
             <div>
               <h1>Gestione utenti</h1>
-              <p class="muted">Approva registrazioni, modifica ruoli, quote e stato.</p>
+              <p class="muted">Crea utenti, approva registrazioni, modifica ruoli, quote e stato.</p>
             </div>
           </div>
+
+          <article class="card">
+            <h2>Crea nuovo utente</h2>
+            <p class="muted">L'utente viene creato già attivo e può accedere subito con email e password.</p>
+            <form id="createUserForm" class="request-form">
+              <label>
+                <span>Nome e cognome</span>
+                <input type="text" id="newUserName" required autocomplete="off" />
+              </label>
+              <label>
+                <span>Email</span>
+                <input type="email" id="newUserEmail" required autocomplete="off" />
+              </label>
+              <label>
+                <span>Password iniziale (min. 8 caratteri)</span>
+                <input type="password" id="newUserPassword" required minlength="8" autocomplete="new-password" />
+              </label>
+              <label>
+                <span>Ruolo</span>
+                <select id="newUserRole">
+                  <option value="employee">Employee</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <label>
+                <span>Quota ferie annua (giorni)</span>
+                <input type="number" id="newUserQuota" min="0" max="365" value="33" required />
+              </label>
+              <div class="form-actions full-width">
+                <p class="status-message" id="createUserStatus"></p>
+                <button type="submit" class="primary-button">Crea utente</button>
+              </div>
+            </form>
+          </article>
+
           <article class="card">
             <div class="table-wrap">
               <table>

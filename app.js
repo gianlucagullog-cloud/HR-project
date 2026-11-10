@@ -92,6 +92,13 @@ const refs = {
 
   // users
   usersTableBody: el("usersTableBody"),
+  createUserForm: el("createUserForm"),
+  newUserName: el("newUserName"),
+  newUserEmail: el("newUserEmail"),
+  newUserPassword: el("newUserPassword"),
+  newUserRole: el("newUserRole"),
+  newUserQuota: el("newUserQuota"),
+  createUserStatus: el("createUserStatus"),
 
   // template
   metricTemplate: el("metricCardTemplate")
@@ -179,6 +186,9 @@ function bindEvents() {
   });
 
   refs.exportCsvButton.addEventListener("click", exportCsv);
+
+  // Admin: crea utente
+  if (refs.createUserForm) refs.createUserForm.addEventListener("submit", handleCreateUser);
 
   // Period
   refs.periodPreset.addEventListener("change", handlePresetChange);
@@ -952,6 +962,53 @@ function exportCsv() {
 // =====================================================================
 // UTILITIES
 // =====================================================================
+
+// =====================================================================
+// ADMIN: CREA UTENTE (via Edge Function "admin-create-user")
+// =====================================================================
+
+async function handleCreateUser(event) {
+  event.preventDefault();
+  if (!supabaseClient || state.profile?.role !== "admin") return;
+
+  const submitButton = refs.createUserForm.querySelector('button[type="submit"]');
+  const payload = {
+    full_name: refs.newUserName.value.trim(),
+    email: refs.newUserEmail.value.trim(),
+    password: refs.newUserPassword.value,
+    role: refs.newUserRole.value,
+    annual_quota: Number(refs.newUserQuota.value || DEFAULT_QUOTA)
+  };
+
+  submitButton.disabled = true;
+  setStatus(refs.createUserStatus, "Creazione in corso…");
+
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("admin-create-user", { body: payload });
+
+    if (error) {
+      let message = error.message;
+      try {
+        const details = await error.context?.json?.();
+        if (details?.error) message = details.error;
+      } catch (_) { /* risposta non JSON */ }
+      if (/Failed to send|not found|404/i.test(message)) {
+        message = "Funzione 'admin-create-user' non raggiungibile: verifica che sia pubblicata su Supabase.";
+      }
+      setStatus(refs.createUserStatus, message, "error");
+      return;
+    }
+
+    setStatus(refs.createUserStatus, `Utente ${data?.email || payload.email} creato e attivo.`, "success");
+    refs.createUserForm.reset();
+    refs.newUserQuota.value = DEFAULT_QUOTA;
+    await refreshData();
+  } catch (err) {
+    setStatus(refs.createUserStatus, `Errore: ${err.message}`, "error");
+  } finally {
+    submitButton.disabled = false;
+  }
+}
 
 function setStatus(node, text, kind = "") {
   if (!node) return;

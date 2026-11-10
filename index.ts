@@ -30,8 +30,8 @@ Deno.serve(async (req) => {
 
   // 2) Verifica che sia admin
   const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
-  const { data: me } = await admin.from("profiles").select("role").eq("id", user.id).single();
-  if (me?.role !== "admin") return json({ error: "Solo gli admin possono creare utenti" }, 403);
+  const { data: me } = await admin.from("profiles").select("role, status").eq("id", user.id).single();
+  if (me?.role !== "admin" || me?.status !== "active") return json({ error: "Solo gli admin possono creare utenti" }, 403);
 
   // 3) Valida input
   const body = await req.json().catch(() => ({}));
@@ -39,8 +39,8 @@ Deno.serve(async (req) => {
   const password = String(body.password ?? "");
   const full_name = String(body.full_name ?? "").trim();
   const role = body.role === "admin" ? "admin" : "employee";
-  const annual_quota = Number.isFinite(Number(body.annual_quota)) ? Number(body.annual_quota) : 26;
-  const status = String(body.status ?? "approved");
+  const annual_quota = Number.isFinite(Number(body.annual_quota)) ? Number(body.annual_quota) : 33;
+  const status = "active"; // valori ammessi dal DB: pending | active | disabled
 
   if (!email || !email.includes("@")) return json({ error: "Email non valida" }, 400);
   if (password.length < 8) return json({ error: "La password deve avere almeno 8 caratteri" }, 400);
