@@ -127,6 +127,10 @@ const refs = {
   empRateHint: el("empRateHint"),
   empQuota: el("empQuota"),
   empNotes: el("empNotes"),
+  empBillingName: el("empBillingName"),
+  empBillingEmail: el("empBillingEmail"),
+  empBillingAddress: el("empBillingAddress"),
+  empTaxId: el("empTaxId"),
   empStatus: el("empStatus"),
   leaveYearLabel: el("leaveYearLabel"),
   leaveTotal: el("leaveTotal"),
@@ -1146,9 +1150,13 @@ function workingDaysInYear(year) {
   return countWorkingDays(`${year}-01-01`, `${year}-12-31`);
 }
 
-function effectiveRate(pay, year) {
-  if (pay.annualSalary > 0) return pay.annualSalary / ANNUAL_PAID_DAYS;
-  return pay.dailyRate; // nessun salario: daily rate inserito a mano
+// Il daily rate è il dato inserito; il salario annuo = daily rate × 228.
+function effectiveRate(pay, _year) {
+  return pay.dailyRate;
+}
+
+function annualFromRate(rate) {
+  return Math.round((Number(rate) || 0) * ANNUAL_PAID_DAYS * 100) / 100;
 }
 
 function prevDay(iso) {
@@ -1186,7 +1194,7 @@ function bindEmployeeSheetEvents() {
 
   refs.empForm.addEventListener("submit", saveEmployeeSheet);
 
-  refs.empSalary.addEventListener("input", syncRateField);
+  refs.empRate.addEventListener("input", syncSalaryField);
 
   refs.payItemKind.addEventListener("change", syncPayItemForm);
   refs.payItemForm.addEventListener("submit", addPayItem);
@@ -1199,7 +1207,9 @@ function bindEmployeeSheetEvents() {
   refs.payValidation.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-validation]");
     if (!btn) return;
-    if (btn.dataset.validation === "validate") validateMonth();
+    const action = btn.dataset.validation;
+    if (action === "validate") validateMonth();
+    else if (action === "send") sendInvoice();
     else unvalidateMonth();
   });
 
@@ -1229,7 +1239,7 @@ function bindEmployeeSheetEvents() {
 async function fetchEmployeePay() {
   return supabaseClient
     .from("employee_pay")
-    .select("employee_id, job_title, department, contract_start, annual_salary, daily_rate, notes");
+    .select("*");
 }
 
 function payTableError(error) {
@@ -1245,9 +1255,13 @@ function getPay(employeeId) {
     jobTitle: r.job_title || "",
     department: r.department || "",
     contractStart: r.contract_start || "",
-    annualSalary: Number(r.annual_salary) || 0,
     dailyRate: Number(r.daily_rate) || 0,
-    notes: r.notes || ""
+    annualSalary: annualFromRate(r.daily_rate),
+    notes: r.notes || "",
+    billingName: r.billing_name || "",
+    billingEmail: r.billing_email || "",
+    billingAddress: r.billing_address || "",
+    taxId: r.tax_id || ""
   };
 }
 
@@ -1328,16 +1342,10 @@ function computePayslip(employee, pay, ym) {
   };
 }
 
-function syncRateField() {
-  const salary = Number(refs.empSalary.value);
-  if (salary > 0) {
-    refs.empRate.value = (salary / ANNUAL_PAID_DAYS).toFixed(2);
-    refs.empRate.readOnly = true;
-    refs.empRateHint.textContent = `Calcolato: salario ÷ ${ANNUAL_PAID_DAYS} giorni (daily rate × ${ANNUAL_PAID_DAYS} = salario annuo)`;
-  } else {
-    refs.empRate.readOnly = false;
-    refs.empRateHint.textContent = "Inserisci il salario annuo per calcolarlo in automatico";
-  }
+function syncSalaryField() {
+  const rate = Number(refs.empRate.value);
+  refs.empSalary.value = rate > 0 ? annualFromRate(rate).toFixed(2) : "";
+  refs.empRateHint.textContent = `Calcolato: daily rate × ${ANNUAL_PAID_DAYS} giorni`;
 }
 
 function renderEmployeeSheet() {
@@ -1377,11 +1385,15 @@ function renderEmployeeSheet() {
     refs.empJobTitle.value = pay.jobTitle;
     refs.empDepartment.value = pay.department;
     refs.empContractStart.value = pay.contractStart;
-    refs.empSalary.value = pay.annualSalary || "";
     refs.empRate.value = pay.dailyRate || "";
-    syncRateField();
+    syncSalaryField();
     refs.empQuota.value = employee.annualQuota ?? DEFAULT_QUOTA;
     refs.empNotes.value = pay.notes;
+    refs.empBillingName.value = pay.billingName;
+    refs.empBillingEmail.value = pay.billingEmail;
+    refs.empBillingEmail.placeholder = employee.email;
+    refs.empBillingAddress.value = pay.billingAddress;
+    refs.empTaxId.value = pay.taxId;
   }
 
   // Saldo ferie (anno del mese selezionato)
@@ -1456,8 +1468,8 @@ function renderPayslip(employee, pay) {
   parts.push(`Ferie ${fmtDays(ps.ferie)}`, `Permessi ${fmtDays(ps.permessi)}`, `Malattia ${fmtDays(ps.malattia)}`);
   parts.push(`→ Giorni lavorati ${fmtDays(ps.worked)}`);
   const rateNote = pay.annualSalary > 0
-    ? ` Daily rate = ${fmtEur(pay.annualSalary)} ÷ ${ANNUAL_PAID_DAYS} giorni.`
-    : (ps.rate ? "" : " — Imposta il salario annuo nei dati contrattuali.");
+    ? ` Salario annuo = ${fmtEur(ps.rate)} × ${ANNUAL_PAID_DAYS} giorni = ${fmtEur(pay.annualSalary)}.`
+    : " — Imposta il daily rate nei dati contrattuali.";
   refs.payDaysDetail.textContent = parts.join(" · ") + "." + rateNote;
   state.lastPayslip = { employee, pay, ps, validation };
 
@@ -1470,9 +1482,15 @@ function renderPayslip(employee, pay) {
         <div>
           <strong>✓ ${monthLabel} validato: ${fmtEur(validation.amount)}</strong>
           <span class="metric-detail">il ${formatDate(validation.validated_at)}${validation.validated_by ? ` da ${escapeHtml(getEmployeeById(validation.validated_by)?.fullName || "admin")}` : ""}</span>
+          ${validation.sent_at
+            ? `<span class="metric-detail sent-line">✉ Inviata il ${formatDate(validation.sent_at)} a ${escapeHtml(validation.sent_to || "")}</span>`
+            : ""}
           ${changed ? `<span class="validation-warn">Attenzione: con i dati attuali il mese varrebbe ${fmtEur(ps.total)}. L'importo validato resta ${fmtEur(validation.amount)}.</span>` : ""}
         </div>
-        <button type="button" class="action-button neutral" data-validation="undo">Annulla validazione</button>
+        <div class="validation-actions">
+          <button type="button" class="primary-button" data-validation="send">${validation.sent_at ? "Invia di nuovo" : "Invia fattura"}</button>
+          <button type="button" class="action-button neutral" data-validation="undo">Annulla validazione</button>
+        </div>
       </div>`;
   } else {
     refs.payValidation.innerHTML = `
@@ -1505,7 +1523,7 @@ async function loadPayItems() {
       .eq("employee_id", empId)
       .order("created_at", { ascending: true }),
     supabaseClient.from("payslip_validations")
-      .select("id, month, amount, daily_rate, worked_days, paid_leave, bonus_amount, validated_at, validated_by")
+      .select("*")
       .eq("employee_id", empId)
       .order("month", { ascending: true })
   ]);
@@ -1552,7 +1570,9 @@ function renderInvoiceHistory(employee, pay) {
     else if (!future) open += ps.total;
 
     const status = v
-      ? `<span class="badge Approved">Validato</span>`
+      ? (v.sent_at
+          ? `<span class="badge Approved">Validato</span> <span class="badge neutral" title="${escapeHtml(v.sent_to || "")}">Inviata ${formatDate(v.sent_at)}</span>`
+          : `<span class="badge Approved">Validato</span>`)
       : future ? `<span class="badge disabled">Futuro</span>` : `<span class="badge Pending">Da validare</span>`;
     rows.push(`
       <tr data-month="${ym}" class="inv-row ${ym === state.payMonth ? "is-selected" : ""}">
@@ -1611,7 +1631,8 @@ async function validateMonth() {
 async function unvalidateMonth() {
   const v = getValidation(state.payMonth);
   if (!v) return;
-  if (!confirm(`Annullare la validazione di ${monthName(state.payMonth)} (${fmtEur(v.amount)})?\nL'importo verrà tolto dal fatturato.`)) return;
+  const sentNote = v.sent_at ? `\n\nATTENZIONE: la fattura è già stata inviata il ${formatDate(v.sent_at)} a ${v.sent_to}.` : "";
+  if (!confirm(`Annullare la validazione di ${monthName(state.payMonth)} (${fmtEur(v.amount)})?\nL'importo verrà tolto dal fatturato.${sentNote}`)) return;
   const { error } = await supabaseClient.from("payslip_validations").delete().eq("id", v.id);
   if (error) return setStatus(refs.payStatus, payTableError(error), "error");
   setStatus(refs.payStatus, "Validazione annullata.", "success");
@@ -1670,11 +1691,13 @@ async function saveEmployeeSheet(event) {
     job_title: refs.empJobTitle.value.trim(),
     department: refs.empDepartment.value.trim(),
     contract_start: refs.empContractStart.value || null,
-    annual_salary: Number(refs.empSalary.value) || 0,
-    daily_rate: Math.round((Number(refs.empSalary.value) > 0
-      ? Number(refs.empSalary.value) / ANNUAL_PAID_DAYS
-      : Number(refs.empRate.value) || 0) * 100) / 100,
+    daily_rate: Math.round((Number(refs.empRate.value) || 0) * 100) / 100,
+    annual_salary: annualFromRate(refs.empRate.value),
     notes: refs.empNotes.value.trim(),
+    billing_name: refs.empBillingName.value.trim(),
+    billing_email: refs.empBillingEmail.value.trim(),
+    billing_address: refs.empBillingAddress.value.trim(),
+    tax_id: refs.empTaxId.value.trim().toUpperCase(),
     updated_at: new Date().toISOString()
   };
   const quota = Number(refs.empQuota.value);
@@ -1707,7 +1730,7 @@ async function addPayItem(event) {
     const rate = state.lastPayslip?.ps.rate || 0;
     days = Number(refs.payItemDays.value);
     if (!days) return setStatus(refs.payStatus, "Inserisci i giorni di ferie non godute da liquidare.", "error");
-    if (!rate) return setStatus(refs.payStatus, "Imposta prima il salario annuo.", "error");
+    if (!rate) return setStatus(refs.payStatus, "Imposta prima il daily rate.", "error");
     amount = Math.round(days * rate * 100) / 100;
   } else {
     amount = Number(refs.payItemAmount.value);
@@ -1771,6 +1794,177 @@ function printPayslip() {
     <script>window.onload=()=>window.print()<\/script>
     </body></html>`);
   w.document.close();
+}
+
+// =====================================================================
+// INVIO FATTURA (Outlook + PDF da allegare) - solo mesi validati
+// =====================================================================
+
+const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+const AUTOTABLE_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const tag = document.createElement("script");
+    tag.src = src;
+    tag.onload = resolve;
+    tag.onerror = () => reject(new Error(`Impossibile caricare ${src}`));
+    document.head.appendChild(tag);
+  });
+}
+
+async function loadPdfLib() {
+  if (!window.jspdf) await loadScript(JSPDF_URL);
+  if (!window.jspdf?.jsPDF?.API?.autoTable) await loadScript(AUTOTABLE_URL);
+  return window.jspdf.jsPDF;
+}
+
+// Righe della fattura prese dallo snapshot validato (non cambiano più)
+function invoiceLines(v) {
+  const d = v.details || {};
+  const rate = Number(v.daily_rate) || 0;
+  const lines = [{
+    desc: "Compenso giorni lavorati",
+    days: Number(v.worked_days) || 0,
+    rate,
+    amount: d.base != null ? Number(d.base) : (Number(v.worked_days) || 0) * rate
+  }];
+  (d.items || []).forEach((i) => lines.push({
+    desc: (i.kind === "Ferie pagate" ? "Ferie non godute (liquidazione)" : i.kind) +
+          (i.description ? ` - ${i.description}` : ""),
+    days: i.days != null ? Number(i.days) : null,
+    rate: i.days ? Number(i.amount) / Number(i.days) : null,
+    amount: Number(i.amount) || 0
+  }));
+  return lines;
+}
+
+function fmtEurPdf(v) {
+  // jsPDF non gestisce lo spazio stretto di Intl: normalizza
+  return fmtEur(v).replace(/ | /g, " ");
+}
+
+async function buildInvoicePdf({ employee, pay, v, monthLabel }) {
+  const JsPDF = await loadPdfLib();
+  const doc = new JsPDF({ unit: "pt", format: "a4" });
+  const left = 48;
+  let y = 56;
+
+  doc.setFont("helvetica", "bold").setFontSize(18).text(`Prospetto fattura - ${monthLabel}`, left, y);
+  y += 18;
+  doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(110)
+    .text(`Importo validato da Marathonbet Italia il ${formatDate(v.validated_at)}. Importi lordi.`, left, y);
+  doc.setTextColor(0);
+  y += 30;
+
+  const block = (title, rows, x) => {
+    let yy = y;
+    doc.setFont("helvetica", "bold").setFontSize(10).text(title, x, yy);
+    doc.setFont("helvetica", "normal").setFontSize(10);
+    rows.filter(Boolean).forEach((r) => {
+      doc.splitTextToSize(r, 230).forEach((line) => { yy += 14; doc.text(line, x, yy); });
+    });
+    return yy;
+  };
+  const y1 = block("Intestatario (emittente)", [
+    pay.billingName || employee.fullName,
+    ...(pay.billingAddress ? pay.billingAddress.split(/\n/) : ["Indirizzo: -"]),
+    `P.IVA / C.F.: ${pay.taxId || "-"}`,
+    pay.billingEmail || employee.email
+  ], left);
+  const y2 = block("Committente", ["Marathonbet Italia"], 320);
+  y = Math.max(y1, y2) + 28;
+
+  const lines = invoiceLines(v);
+  doc.autoTable({
+    startY: y,
+    head: [["Descrizione", ...["Giorni", "Tariffa", "Importo"].map((c) => ({ content: c, styles: { halign: "right" } }))]],
+    body: lines.map((l) => [
+      l.desc,
+      l.days != null ? fmtDays(l.days) : "",
+      l.rate != null ? fmtEurPdf(l.rate) : "",
+      fmtEurPdf(l.amount)
+    ]),
+    foot: [["Totale", "", "", { content: fmtEurPdf(v.amount), styles: { halign: "right" } }]],
+    theme: "grid",
+    styles: { font: "helvetica", fontSize: 10, cellPadding: 6 },
+    headStyles: { fillColor: [15, 26, 46] },
+    footStyles: { fillColor: [240, 243, 248], textColor: 0, fontStyle: "bold" },
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } },
+    margin: { left, right: left }
+  });
+
+  y = doc.lastAutoTable.finalY + 26;
+  doc.setFontSize(10).text("Si prega di emettere fattura per l'importo totale indicato.", left, y);
+  doc.setFontSize(8).setTextColor(130)
+    .text(`Generato il ${formatDate(new Date())} da Marathonbet Leave Control`, left, 800);
+  return doc;
+}
+
+function invoiceMailBody({ employee, pay, v, monthLabel }) {
+  const lines = invoiceLines(v).map((l) =>
+    `- ${l.desc}: ${l.days != null ? `${fmtDays(l.days)} gg x ${fmtEur(l.rate)} = ` : ""}${fmtEur(l.amount)}`);
+  const firstName = (pay.billingName || employee.fullName).split(" ")[0];
+  return [
+    `Gentile ${firstName},`,
+    "",
+    `in allegato il prospetto della fattura di ${monthLabel.toLowerCase()}, per un importo totale di ${fmtEur(v.amount)}.`,
+    "",
+    "Dettaglio:",
+    ...lines,
+    `Totale: ${fmtEur(v.amount)}`,
+    "",
+    "Dati di fatturazione:",
+    pay.billingName || employee.fullName,
+    ...(pay.billingAddress ? pay.billingAddress.split(/\n/) : []),
+    `P.IVA / C.F.: ${pay.taxId || "-"}`,
+    "",
+    "Ti chiediamo di emettere la fattura per l'importo indicato.",
+    "",
+    "Cordiali saluti",
+    state.profile?.fullName || ""
+  ].join("\r\n");
+}
+
+async function sendInvoice() {
+  const ctx = state.lastPayslip;
+  const v = ctx && getValidation(state.payMonth);
+  if (!v) return setStatus(refs.payStatus, "Valida prima l'importo del mese.", "error");
+  const { employee, pay } = ctx;
+  const to = pay.billingEmail || employee.email;
+  const monthLabel = monthName(state.payMonth);
+
+  const missing = [
+    !pay.billingName && "nome intestatario",
+    !pay.billingAddress && "indirizzo",
+    !pay.taxId && "P.IVA / codice fiscale"
+  ].filter(Boolean);
+  const warn = missing.length ? `\n\nMancano nella scheda: ${missing.join(", ")}.` : "";
+  if (!confirm(`Preparare la fattura di ${monthLabel} (${fmtEur(v.amount)}) per ${to}?\n\n` +
+               `Scarico il PDF e apro una nuova email in Outlook: allega il PDF e premi Invia.${warn}`)) return;
+
+  setStatus(refs.payStatus, "Preparo il PDF…");
+  let fileName;
+  try {
+    const doc = await buildInvoicePdf({ employee, pay, v, monthLabel });
+    const surname = (pay.billingName || employee.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
+    fileName = `Fattura_${surname}_${state.payMonth}.pdf`;
+    doc.save(fileName);
+  } catch (err) {
+    return setStatus(refs.payStatus, `PDF non generato: ${err.message}`, "error");
+  }
+
+  const subject = `Fattura ${monthLabel} - ${pay.billingName || employee.fullName}`;
+  const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(invoiceMailBody({ employee, pay, v, monthLabel }))}`;
+  window.location.href = mailto;
+
+  const { error } = await supabaseClient.from("payslip_validations")
+    .update({ sent_at: new Date().toISOString(), sent_to: to })
+    .eq("id", v.id);
+  if (error) return setStatus(refs.payStatus, payTableError(error), "error");
+  setStatus(refs.payStatus, `PDF "${fileName}" scaricato ed email preparata per ${to}. Allega il PDF in Outlook e invia.`, "success");
+  await loadPayItems();
 }
 
 function setStatus(node, text, kind = "") {

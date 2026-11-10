@@ -330,13 +330,13 @@
                     <input type="date" id="empContractStart" />
                   </label>
                   <label>
-                    <span>Salario annuo lordo (€)</span>
-                    <input type="number" id="empSalary" min="0" step="0.01" />
-                  </label>
-                  <label>
                     <span>Daily rate (€)</span>
                     <input type="number" id="empRate" min="0" step="0.01" />
-                    <small class="metric-detail" id="empRateHint"></small>
+                  </label>
+                  <label>
+                    <span>Salario annuo lordo (€)</span>
+                    <input type="number" id="empSalary" min="0" step="0.01" readonly tabindex="-1" />
+                    <small class="metric-detail" id="empRateHint">Calcolato: daily rate × 228 giorni</small>
                   </label>
                   <label>
                     <span>Quota ferie annua (gg)</span>
@@ -345,6 +345,24 @@
                   <label class="full-width">
                     <span>Note</span>
                     <textarea id="empNotes" rows="2"></textarea>
+                  </label>
+
+                  <h4 class="form-section full-width">Dati di fatturazione</h4>
+                  <label>
+                    <span>Nome e cognome (intestatario)</span>
+                    <input type="text" id="empBillingName" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>Email per le fatture</span>
+                    <input type="email" id="empBillingEmail" autocomplete="off" />
+                  </label>
+                  <label class="full-width">
+                    <span>Indirizzo</span>
+                    <textarea id="empBillingAddress" rows="2" placeholder="Via, numero civico, CAP, città, provincia, paese"></textarea>
+                  </label>
+                  <label class="full-width">
+                    <span>Partita IVA / Codice fiscale</span>
+                    <input type="text" id="empTaxId" autocomplete="off" />
                   </label>
                   <div class="form-actions full-width">
                     <p class="status-message" id="empStatus"></p>

@@ -706,7 +706,6 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .emp-kpis > div { display: grid; gap: 2px; }
 .emp-kpis strong { font-size: 1.15rem; }
 
-#empRate[readonly] { background: var(--surface-2); color: var(--ink-2); }
 .payslip-table tr.pay-info td { color: var(--muted); }
 
 .leave-grid {
@@ -765,6 +764,10 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .validation-box.validated strong { color: var(--success); }
 .validation-warn { color: var(--danger); font-size: 0.85rem; font-weight: 500; }
 .pay-item-form.is-locked { opacity: 0.5; }
+.validation-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sent-line { color: #274a9d; font-weight: 500; }
+.form-section { margin: 8px 0 -4px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 0.95rem; font-weight: 600; }
+#empSalary[readonly] { background: var(--surface-2); color: var(--ink-2); }
 
 .inv-kpis {
   display: grid;

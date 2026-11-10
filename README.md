@@ -42,9 +42,11 @@ Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
 - **Saldo ferie su anno solare** (1 gennaio – 31 dicembre, nessun riporto): pulsanti *Azzera godute* (riparte solo il contatore, richieste e fatture invariate; annullabile) e *Azzera in attesa* (rifiuta le richieste di ferie pendenti).
 - **Validazione mensile**: *Valida importo* congela l'importo del mese (tabella `payslip_validations`); il mese non è più modificabile finché non annulli la validazione.
 - **Fatturato**: tabella mesi dell'anno (simulato / validato / stato), totale validato nell'anno, da validare, totale complessivo.
-- Daily rate = salario annuo ÷ 228 (daily rate × 228 = salario annuo). Si pagano solo i giorni lavorati; le ferie non sono retribuite.
+- Si inserisce il **daily rate**; il salario annuo è calcolato come daily rate × 228. Si pagano solo i giorni lavorati; le ferie non sono retribuite.
+- **Dati di fatturazione** per dipendente: intestatario, email per le fatture, indirizzo, P.IVA / codice fiscale.
+- **Invia fattura** (solo mesi validati): scarica il PDF del prospetto e apre una nuova email nel programma di posta predefinito (es. Outlook) già compilata; il portale registra data e destinatario dell'invio.
 
-Setup una tantum: esegui `supabase_payroll.sql` e poi `supabase_validations.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
+Setup una tantum: esegui `supabase_payroll.sql` poi `supabase_validations.sql` e `supabase_billing.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
 
 ## Deploy
 
@@ -65,6 +67,7 @@ Il repository è già collegato a Vercel. Ogni push su `main` fa il deploy.
 | `supabase_setup.sql`| Schema DB, trigger e RLS |
 | `supabase_payroll.sql`| Tabelle schede dipendente / payslip + fix sicurezza profili |
 | `supabase_validations.sql`| Azzeramento ferie e validazione mesi fatturati |
+| `supabase_billing.sql`| Dati di fatturazione e tracciamento invio fatture |
 | `.nojekyll`         | Evita che GitHub Pages processi i file |
 
 ## Flusso utente
