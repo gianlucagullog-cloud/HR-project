@@ -2004,68 +2004,147 @@ function fmtEurPdf(v) {
   return fmtEur(v).replace(/ | /g, " ");
 }
 
-async function buildInvoicePdf({ employee, pay, v, monthLabel }) {
+// Committente fisso di tutte le fatture
+const INVOICE_BILL_TO = {
+  name: "Revando Limited",
+  lines: ["Room 1403, West Tower, Shun Tak Centre", "168 Connaught Road Central", "Hong Kong"]
+};
+
+function fmtNumPdf(v) {
+  // 1.491,22 (separatore migliaia sempre presente)
+  const n = Math.round((Number(v) || 0) * 100) / 100;
+  const [int, dec] = Math.abs(n).toFixed(2).split(".");
+  return (n < 0 ? "-" : "") + int.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "," + dec;
+}
+
+function fmtDateEn(value) {
+  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+    .format(value ? new Date(value) : new Date());
+}
+
+function monthNameEn(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(new Date(y, m - 1, 1));
+}
+
+function invoiceNumber(ym) {
+  return `INV-${ym.replace("-", "")}`;
+}
+
+// Righe in inglese per il template "Tax Invoice"
+function invoiceLinesEn(v, ym) {
+  const period = monthNameEn(ym);
+  return invoiceLines(v).map((l, idx) => {
+    let desc = l.desc;
+    if (idx === 0) desc = l.days != null ? `Services - ${period} (days worked)` : `Services - ${period}`;
+    else desc = desc
+      .replace(/^Ferie non godute \(liquidazione\)/, "Unused holidays (settlement)")
+      .replace(/^Rimborso/, "Expense refund");
+    const qty = l.days != null ? l.days : 1;
+    const rate = l.days != null ? (l.rate ?? (qty ? l.amount / qty : l.amount)) : l.amount;
+    return { desc, qty, rate, amount: l.amount };
+  });
+}
+
+async function buildInvoicePdf({ employee, pay, v, ym }) {
   const JsPDF = await loadPdfLib();
   const doc = new JsPDF({ unit: "pt", format: "a4" });
-  const left = 48;
-  let y = 56;
+  const L = 50, R = 545, W = R - L;
+  const total = Number(v.amount) || 0;
+  const today = fmtDateEn(new Date());
 
-  doc.setFont("helvetica", "bold").setFontSize(18).text(`Prospetto fattura - ${monthLabel}`, left, y);
-  y += 18;
-  doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(110)
-    .text(`Importo validato da Marathonbet Italia il ${formatDate(v.validated_at)}. Importi lordi.`, left, y);
-  doc.setTextColor(0);
-  y += 30;
-
-  const block = (title, rows, x) => {
-    let yy = y;
-    doc.setFont("helvetica", "bold").setFontSize(10).text(title, x, yy);
-    doc.setFont("helvetica", "normal").setFontSize(10);
-    rows.filter(Boolean).forEach((r) => {
-      doc.splitTextToSize(r, 230).forEach((line) => { yy += 14; doc.text(line, x, yy); });
-    });
-    return yy;
-  };
-  const y1 = block("Intestatario (emittente)", [
-    pay.billingName || employee.fullName,
-    ...(pay.billingAddress ? pay.billingAddress.split(/\n/) : ["Indirizzo: -"]),
-    `P.IVA / C.F.: ${pay.taxId || "-"}`,
+  // Emittente (dati del dipendente)
+  let y = 62;
+  doc.setFont("helvetica", "bold").setFontSize(10).setTextColor(30)
+    .text(pay.billingName || employee.fullName, L, y);
+  doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(60);
+  [
+    ...(pay.billingAddress ? pay.billingAddress.split(/\n|,\s*/) : []),
+    pay.taxId,
     pay.billingEmail || employee.email
-  ], left);
-  const y2 = block("Committente", ["Marathonbet Italia"], 320);
-  y = Math.max(y1, y2) + 28;
+  ].filter(Boolean).forEach((line) => { y += 12; doc.text(line.trim(), L, y); });
 
-  const lines = invoiceLines(v);
+  // Intestazione a destra
+  doc.setFont("helvetica", "normal").setFontSize(30).setTextColor(20).text("TAX INVOICE", R, 80, { align: "right" });
+  doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(40).text(`# ${invoiceNumber(ym)}`, R, 98, { align: "right" });
+  doc.setFontSize(8).text("Balance Due", R, 128, { align: "right" });
+  doc.setFontSize(12).text(`€${fmtNumPdf(total)}`, R, 144, { align: "right" });
+
+  // Bill To (fisso: Revando)
+  y = Math.max(y, 150) + 46;
+  const billY = y;
+  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(60).text("Bill To", L, y);
+  doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(30).text(INVOICE_BILL_TO.name, L, y += 13);
+  doc.setFont("helvetica", "normal").setTextColor(60);
+  INVOICE_BILL_TO.lines.forEach((line) => doc.text(line, L, y += 13));
+
+  // Date e termini
+  [["Invoice Date :", today], ["Terms :", "Due on Receipt"], ["Due Date :", today]].forEach(([k, val], i) => {
+    const yy = billY + 4 + i * 22;
+    doc.setFontSize(10).setTextColor(70).text(k, 420, yy, { align: "right" });
+    doc.setFontSize(9).setTextColor(40).text(val, R, yy, { align: "right" });
+  });
+  y = Math.max(y, billY + 50) + 24;
+
+  // Tabella voci
+  const lines = invoiceLinesEn(v, ym);
   doc.autoTable({
     startY: y,
-    head: [["Descrizione", ...["Giorni", "Tariffa", "Importo"].map((c) => ({ content: c, styles: { halign: "right" } }))]],
-    body: lines.map((l) => [
-      l.desc,
-      l.days != null ? fmtDays(l.days) : "",
-      l.rate != null ? fmtEurPdf(l.rate) : "",
-      fmtEurPdf(l.amount)
-    ]),
-    foot: [["Totale", "", "", { content: fmtEurPdf(v.amount), styles: { halign: "right" } }]],
-    theme: "grid",
-    styles: { font: "helvetica", fontSize: 10, cellPadding: 6 },
-    headStyles: { fillColor: [15, 26, 46] },
-    footStyles: { fillColor: [240, 243, 248], textColor: 0, fontStyle: "bold" },
-    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } },
-    margin: { left, right: left }
+    head: [["#", "Item & Description",
+      { content: "Qty", styles: { halign: "right" } },
+      { content: "Rate", styles: { halign: "right" } },
+      { content: "Amount", styles: { halign: "right" } }]],
+    body: lines.map((l, i) => [String(i + 1), l.desc, fmtNumPdf(l.qty), fmtNumPdf(l.rate), fmtNumPdf(l.amount)]),
+    theme: "plain",
+    styles: { font: "helvetica", fontSize: 9, cellPadding: { top: 8, bottom: 8, left: 6, right: 6 }, textColor: 40 },
+    headStyles: { fillColor: [60, 60, 60], textColor: 255, fontStyle: "normal", fontSize: 9 },
+    columnStyles: {
+      0: { cellWidth: 30, halign: "center" },
+      2: { cellWidth: 60, halign: "right" },
+      3: { cellWidth: 75, halign: "right" },
+      4: { cellWidth: 80, halign: "right" }
+    },
+    didDrawCell: (d) => {
+      if (d.section === "body" && d.column.index === 0 && d.row.index === lines.length - 1) {
+        doc.setDrawColor(170).setLineWidth(0.6)
+          .line(L, d.cell.y + d.cell.height, R, d.cell.y + d.cell.height);
+      }
+    },
+    margin: { left: L, right: 595 - R }
   });
 
-  y = doc.lastAutoTable.finalY + 26;
-  if (pay.iban) {
-    y = block("Coordinate bancarie per il pagamento", [
-      `Intestatario: ${pay.bankHolder || pay.billingName || employee.fullName}`,
-      pay.bankName ? `Banca: ${pay.bankName}` : null,
-      `IBAN: ${formatIban(pay.iban)}`,
-      pay.bic ? `BIC / SWIFT: ${pay.bic}` : null
-    ].filter(Boolean), left) + 26;
-  }
-  doc.setFont("helvetica", "normal").setFontSize(10).text("Si prega di emettere fattura per l'importo totale indicato.", left, y);
-  doc.setFontSize(8).setTextColor(130)
-    .text(`Generato il ${formatDate(new Date())} da Marathonbet Leave Control`, left, 800);
+  // Totali
+  y = doc.lastAutoTable.finalY + 24;
+  const labelX = 440, valX = R - 8;
+  doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(30).text("Sub Total", labelX, y, { align: "right" });
+  doc.setFont("helvetica", "normal").text(fmtNumPdf(total), valX, y, { align: "right" });
+  y += 12;
+  doc.setDrawColor(170).line(L, y, R, y);
+  y += 26;
+  doc.setFont("helvetica", "bold").text("Total", labelX - 10, y, { align: "right" });
+  doc.text(`€${fmtNumPdf(total)}`, valX, y, { align: "right" });
+  y += 14;
+  doc.setFillColor(245, 244, 242).rect(325, y, R - 325, 32, "F");
+  doc.text("Balance Due", labelX - 10, y + 20, { align: "right" });
+  doc.text(`€${fmtNumPdf(total)}`, valX, y + 20, { align: "right" });
+  y += 90;
+
+  // Note e coordinate bancarie (del dipendente)
+  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(60).text("Notes", L, y);
+  doc.setFontSize(7.5).text("Thanks for your business.", L, y += 16);
+  y += 22;
+  doc.setFontSize(9.5).setTextColor(50);
+  [
+    `Account name: ${pay.bankHolder || pay.billingName || employee.fullName}`,
+    pay.bankName ? `Bank: ${pay.bankName}` : null,
+    pay.iban ? `IBAN: ${formatIban(pay.iban)}` : null,
+    pay.bic ? `BIC/SWIFT: ${pay.bic}` : null
+  ].filter(Boolean).forEach((line) => {
+    doc.splitTextToSize(line, W).forEach((t) => { doc.text(t, L, y); y += 13; });
+  });
+
+  doc.setDrawColor(170).line(L - 10, 800, R + 10, 800);
+  doc.setFontSize(7).setTextColor(150).text("1", R + 10, 814, { align: "right" });
   return doc;
 }
 
@@ -2081,6 +2160,8 @@ function invoiceMailBody({ employee, pay, v, monthLabel }) {
     "Dettaglio:",
     ...lines,
     `Totale: ${fmtEur(v.amount)}`,
+    "",
+    `Intestata a: ${INVOICE_BILL_TO.name}, ${INVOICE_BILL_TO.lines.join(", ")}`,
     "",
     "Dati di fatturazione:",
     pay.billingName || employee.fullName,
@@ -2123,9 +2204,9 @@ async function sendInvoice() {
   setStatus(refs.payStatus, "Preparo il PDF…");
   let fileName;
   try {
-    const doc = await buildInvoicePdf({ employee, pay, v, monthLabel });
+    const doc = await buildInvoicePdf({ employee, pay, v, ym: state.payMonth });
     const surname = (pay.billingName || employee.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
-    fileName = `Fattura_${surname}_${state.payMonth}.pdf`;
+    fileName = `${invoiceNumber(state.payMonth)}_${surname}.pdf`;
     doc.save(fileName);
   } catch (err) {
     return setStatus(refs.payStatus, `PDF non generato: ${err.message}`, "error");
