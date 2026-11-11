@@ -53,6 +53,13 @@ create policy "payslip_validations_select_own"
   to authenticated
   using ( employee_id = auth.uid() );
 
+-- 2b) Voci extra della fattura (rimborsi, ferie liquidate): ognuno legge solo le proprie
+drop policy if exists "payslip_items_select_own" on public.payslip_items;
+create policy "payslip_items_select_own"
+  on public.payslip_items for select
+  to authenticated
+  using ( employee_id = auth.uid() );
+
 -- 3) Azzeramenti ferie: ognuno legge solo i propri (servono al saldo ferie)
 drop policy if exists "leave_adjustments_select_own" on public.leave_adjustments;
 create policy "leave_adjustments_select_own"
