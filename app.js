@@ -110,6 +110,15 @@ const refs = {
 
   // schede dipendente
   empSelect: el("empSelect"),
+  empDirectory: el("empDirectory"),
+  empDetail: el("empDetail"),
+  empBack: el("empBack"),
+  dirMetrics: el("dirMetrics"),
+  dirSearch: el("dirSearch"),
+  dirDept: el("dirDept"),
+  dirCount: el("dirCount"),
+  dirBody: el("dirBody"),
+  dirMonthHead: el("dirMonthHead"),
   empEmpty: el("empEmpty"),
   empSheet: el("empSheet"),
   empName: el("empName"),
@@ -253,6 +262,7 @@ function bindEvents() {
   document.querySelectorAll("[data-view-target]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.viewTarget;
+      if (state.activeView === "employees") openDirectory();
       syncViewUI();
     });
   });
@@ -1195,6 +1205,18 @@ function bindEmployeeSheetEvents() {
   state.payMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   refs.payMonth.value = state.payMonth;
 
+  refs.empBack.addEventListener("click", openDirectory);
+  refs.dirSearch.addEventListener("input", renderDirectory);
+  refs.dirDept.addEventListener("change", renderDirectory);
+  const openFromRow = (target) => {
+    const row = target.closest("tr[data-emp]");
+    if (row) openEmployee(row.dataset.emp);
+  };
+  refs.dirBody.addEventListener("click", (e) => openFromRow(e.target));
+  refs.dirBody.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFromRow(e.target); }
+  });
+
   refs.empSelect.addEventListener("change", async () => {
     state.selectedEmployeeId = refs.empSelect.value;
     state.payItemsAll = [];
@@ -1502,8 +1524,154 @@ function syncSalaryField() {
   }
 }
 
+// =====================================================================
+// ELENCO DIPENDENTI (home della sezione)
+// =====================================================================
+
+function currentYm() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function openDirectory() {
+  state.empMode = "list";
+  syncEmployeeMode();
+  renderDirectory();
+  loadDirectoryData();
+}
+
+async function openEmployee(id) {
+  state.empMode = "detail";
+  state.selectedEmployeeId = id;
+  state.payItemsAll = [];
+  state.validations = [];
+  setStatus(refs.empStatus, "");
+  setStatus(refs.payStatus, "");
+  syncEmployeeMode();
+  renderEmployeeSheet();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  await loadPayItems();
+}
+
+function syncEmployeeMode() {
+  const list = state.empMode !== "detail";
+  refs.empDirectory.classList.toggle("hidden", !list);
+  refs.empDetail.classList.toggle("hidden", list);
+}
+
+// Validazioni e voci del mese corrente per tutti i dipendenti
+async function loadDirectoryData() {
+  if (!supabaseClient || state.profile?.role !== "admin") return;
+  const ym = currentYm();
+  const { start } = monthBounds(ym);
+  const [valRes, itemsRes] = await Promise.all([
+    supabaseClient.from("payslip_validations").select("employee_id, month, amount, sent_at").eq("month", start),
+    supabaseClient.from("payslip_items").select("employee_id, month, kind, description, days, amount").eq("month", start)
+  ]);
+  state.dir = {
+    ym,
+    validations: valRes.error ? [] : valRes.data,
+    items: itemsRes.error ? [] : itemsRes.data
+  };
+  renderDirectory();
+}
+
+function initials(name) {
+  return String(name || "?").trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
+}
+
+function directoryRow(employee, ym, dir) {
+  const pay = getPay(employee.id);
+  const year = Number(ym.slice(0, 4));
+  const lb = computeLeaveBalance(employee, pay, year);
+
+  // Fattura del mese: importo validato se presente, altrimenti simulazione con le voci di quel dipendente
+  const saved = state.payItemsAll;
+  state.payItemsAll = (dir?.items || []).filter((i) => i.employee_id === employee.id);
+  const ps = computePayslip(employee, pay, ym);
+  state.payItemsAll = saved;
+  const v = (dir?.validations || []).find((x) => x.employee_id === employee.id);
+
+  const missing = [
+    !(pay.payType === "fixed" ? pay.annualSalary : pay.dailyRate) && "compenso",
+    !pay.iban && "IBAN",
+    !pay.contractStart && "inizio contratto"
+  ].filter(Boolean);
+
+  return { employee, pay, lb, ps, v, missing, amount: v ? Number(v.amount) : ps.total };
+}
+
+function renderDirectory() {
+  if (!refs.dirBody || state.profile?.role !== "admin") return;
+  const ym = state.dir?.ym || currentYm();
+  const dir = state.dir && state.dir.ym === ym ? state.dir : null;
+  const rows = state.employees.map((e) => directoryRow(e, ym, dir))
+    .sort((a, b) => a.employee.fullName.localeCompare(b.employee.fullName, "it"));
+
+  // Filtri
+  const depts = [...new Set(rows.map((r) => r.pay.department).filter(Boolean))].sort((a, b) => a.localeCompare(b, "it"));
+  const curDept = refs.dirDept.value;
+  refs.dirDept.innerHTML = `<option value="">Tutti i dipartimenti</option>` +
+    depts.map((d) => `<option value="${escapeHtml(d)}" ${d === curDept ? "selected" : ""}>${escapeHtml(d)}</option>`).join("");
+  const q = refs.dirSearch.value.trim().toLowerCase();
+  const shown = rows.filter((r) =>
+    (!curDept || r.pay.department === curDept) &&
+    (!q || [r.employee.fullName, r.employee.email, r.pay.jobTitle, r.pay.department].join(" ").toLowerCase().includes(q)));
+
+  // Riepilogo
+  const monthLabel = monthName(ym);
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+  const validated = rows.filter((r) => r.v).length;
+  const sent = rows.filter((r) => r.v?.sent_at).length;
+  const incomplete = rows.filter((r) => r.missing.length).length;
+  refs.dirMetrics.innerHTML = [
+    ["Dipendenti attivi", rows.length, `${depts.length} dipartiment${depts.length === 1 ? "o" : "i"}`],
+    [`Fatture ${monthLabel.toLowerCase()}`, fmtEur(total), "validato o simulato"],
+    ["Validate", `${validated}/${rows.length}`, `${sent} inviate`],
+    ["Schede incomplete", incomplete, incomplete ? "mancano dati (vedi elenco)" : "tutto in ordine"]
+  ].map(([label, value, sub]) => `
+    <article class="metric-card">
+      <span class="metric-label">${label}</span>
+      <strong class="metric-value">${value}</strong>
+      <span class="metric-detail">${sub}</span>
+    </article>`).join("");
+
+  refs.dirMonthHead.textContent = `Fattura ${monthLabel.toLowerCase()}`;
+  refs.dirCount.textContent = shown.length === rows.length ? `${rows.length} dipendenti` : `${shown.length} di ${rows.length}`;
+
+  refs.dirBody.innerHTML = shown.length ? shown.map((r) => {
+    const { employee, pay, lb, v, missing } = r;
+    const comp = pay.payType === "fixed"
+      ? (pay.annualSalary ? `${fmtEur(pay.annualSalary)}<span class="dir-sub">fisso annuo</span>` : "-")
+      : (pay.dailyRate ? `${fmtEur(pay.dailyRate)}<span class="dir-sub">al giorno</span>` : "-");
+    const status = v
+      ? (v.sent_at ? `<span class="badge Approved">Inviata</span>` : `<span class="badge neutral">Validata</span>`)
+      : `<span class="badge Pending">Da validare</span>`;
+    return `
+      <tr data-emp="${employee.id}" tabindex="0">
+        <td>
+          <div class="dir-person">
+            <span class="dir-avatar">${escapeHtml(initials(employee.fullName))}</span>
+            <div>
+              <strong>${escapeHtml(employee.fullName)}</strong>
+              <span class="dir-sub">${escapeHtml(employee.email || "")}</span>
+              ${missing.length ? `<span class="dir-warn">Manca: ${missing.join(", ")}</span>` : ""}
+            </div>
+          </div>
+        </td>
+        <td>${escapeHtml(pay.jobTitle || "-")}<span class="dir-sub">${escapeHtml(pay.department || "Nessun dipartimento")}</span></td>
+        <td class="num">${comp}</td>
+        <td class="num ${lb.remaining < 0 ? "negative-text" : ""}">${fmtDays(lb.remaining)} gg<span class="dir-sub">su ${fmtDays(lb.total)}</span></td>
+        <td class="num">${fmtEur(r.amount)}<span class="dir-sub">${v ? "validato" : "simulato"}</span></td>
+        <td>${status}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="6" class="empty-state">Nessun dipendente corrisponde ai filtri.</td></tr>`;
+}
+
 function renderEmployeeSheet() {
   if (!refs.empSelect || state.profile?.role !== "admin") return;
+  syncEmployeeMode();
+  if (state.empMode !== "detail") { renderDirectory(); return; }
 
   const employees = state.employees;
   refs.empEmpty.classList.toggle("hidden", employees.length > 0);
