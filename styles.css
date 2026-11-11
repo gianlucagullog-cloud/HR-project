@@ -85,6 +85,7 @@ code {
 }
 
 .brand-wordmark { color: #ffffff; }
+.brand-logo { display: block; height: 34px; width: auto; }
 
 .brand-badge {
   background: var(--accent);
@@ -833,6 +834,7 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
   .site-header-inner { padding: 14px 16px; }
   .shell { padding: 20px 16px 40px; }
   .brand-lockup { font-size: 1.6rem; }
+  .brand-logo { height: 26px; }
   .header-title { display: none; }
   .two-col { grid-template-columns: 1fr; }
   .request-form { grid-template-columns: 1fr; }
