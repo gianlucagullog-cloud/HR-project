@@ -98,8 +98,14 @@
       <section class="app-wrap hidden" id="appContent">
 
         <div class="preview-banner hidden" id="previewBanner">
-          <span><strong>Vista dipendente</strong> · stai vedendo il portale come lo vede un dipendente, con i tuoi dati. Le richieste inviate sono reali.</span>
-          <button type="button" class="ghost-button" id="previewExit">Torna ad admin</button>
+          <span id="previewText"><strong>Vista dipendente</strong></span>
+          <div class="preview-actions">
+            <label class="preview-as">
+              <span>Vedi come</span>
+              <select id="previewAs"></select>
+            </label>
+            <button type="button" class="ghost-button" id="previewExit">Torna ad admin</button>
+          </div>
         </div>
 
         <nav class="main-nav" aria-label="Navigazione">
