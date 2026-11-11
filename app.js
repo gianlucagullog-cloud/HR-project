@@ -166,6 +166,12 @@ const refs = {
   payItemDesc: el("payItemDesc"),
   payStatus: el("payStatus"),
   payValidation: el("payValidation"),
+  payInvoiceForm: el("payInvoiceForm"),
+  payInvNumber: el("payInvNumber"),
+  payInvDesc: el("payInvDesc"),
+  payInvDays: el("payInvDays"),
+  payInvDaysWrap: el("payInvDaysWrap"),
+  payInvDaysHint: el("payInvDaysHint"),
   leaveResetUsed: el("leaveResetUsed"),
   leaveUndoReset: el("leaveUndoReset"),
   leaveResetPending: el("leaveResetPending"),
@@ -1206,6 +1212,17 @@ function bindEmployeeSheetEvents() {
 
   refs.empForm.addEventListener("submit", saveEmployeeSheet);
 
+  // Dati fattura del mese: numero, descrizione attività, giorni lavorati
+  refs.payInvoiceForm.addEventListener("submit", (e) => e.preventDefault());
+  [["payInvNumber", "number"], ["payInvDesc", "description"], ["payInvDays", "days"]].forEach(([id, key]) => {
+    refs[id].addEventListener("input", () => {
+      const ctx = state.lastPayslip;
+      if (!ctx || ctx.validation) return;
+      setPayOverride(ctx.employee.id, state.payMonth, { [key]: refs[id].value.trim() });
+      renderEmployeeSheet();
+    });
+  });
+
   refs.empRate.addEventListener("input", syncSalaryField);
   refs.empSalary.addEventListener("input", syncSalaryField);
   refs.empPayType.addEventListener("change", syncSalaryField);
@@ -1356,6 +1373,29 @@ function computeLeaveBalance(employee, pay, year) {
   return { quota, months, total, used, usedRaw, offset, pending, permessi, malattia, remaining: total - used };
 }
 
+// Dati fattura inseriti a mano per dipendente+mese (finché il mese non è validato;
+// alla validazione vengono salvati nello snapshot)
+const PAY_OV_KEY = "mbi-pay-overrides";
+
+function readPayOverrides() {
+  try { return JSON.parse(localStorage.getItem(PAY_OV_KEY)) || {}; } catch { return {}; }
+}
+
+function getPayOverride(employeeId, ym) {
+  return readPayOverrides()[`${employeeId}|${ym}`] || {};
+}
+
+function setPayOverride(employeeId, ym, patch) {
+  try {
+    const all = readPayOverrides();
+    const key = `${employeeId}|${ym}`;
+    const cur = { ...(all[key] || {}), ...patch };
+    Object.keys(cur).forEach((k) => { if (cur[k] === "" || cur[k] == null) delete cur[k]; });
+    if (Object.keys(cur).length) all[key] = cur; else delete all[key];
+    localStorage.setItem(PAY_OV_KEY, JSON.stringify(all));
+  } catch { /* storage non disponibile */ }
+}
+
 function computePayslip(employee, pay, ym) {
   const { year, start, end } = monthBounds(ym);
   const rate = effectiveRate(pay, year);
@@ -1368,7 +1408,11 @@ function computePayslip(employee, pay, ym) {
   const ferie = absence("Ferie");
   const permessi = absence("Permesso");
   const malattia = absence("Malattia");
-  const worked = Math.max(workingDays - ferie - permessi - malattia, 0);
+  const computedWorked = Math.max(workingDays - ferie - permessi - malattia, 0);
+  const ov = getPayOverride(employee.id, ym);
+  const daysOv = ov.days !== undefined && ov.days !== "" && Number.isFinite(Number(ov.days)) && Number(ov.days) >= 0
+    ? Number(ov.days) : null;
+  const worked = pay.payType !== "fixed" && daysOv != null ? daysOv : computedWorked;
 
   // Ferie non retribuite (il daily rate è già calcolato su 228 giorni)
   const paidFerie = 0;
@@ -1390,6 +1434,8 @@ function computePayslip(employee, pay, ym) {
 
   return {
     payType: pay.payType, fixedMonthly, fixedRatio,
+    computedWorked, daysEdited: pay.payType !== "fixed" && daysOv != null,
+    invoiceNo: ov.number || "", description: ov.description || "",
     year, rate, start, end, effStart, workingDays, ferie, paidFerie, unpaidFerie,
     permessi, malattia, worked, base, ferieAmount, bonus, items,
     total: Math.round((base + ferieAmount + bonus) * 100) / 100
@@ -1547,7 +1593,7 @@ function renderPayslip(employee, pay) {
       <td></td>
     </tr>` : `
     <tr>
-      <td>Retribuzione giorni lavorati</td>
+      <td>Retribuzione giorni lavorati${ps.daysEdited ? ` <span class="muted">(modificati a mano, calcolati ${fmtDays(ps.computedWorked)})</span>` : ""}</td>
       <td class="num">${fmtDays(ps.worked)}</td>
       <td class="num">${fmtEur(ps.rate)}</td>
       <td class="num">${fmtEur(ps.base)}</td>
@@ -1599,6 +1645,7 @@ function renderPayslip(employee, pay) {
         : "Imposta il salario annuo nei dati contrattuali.")
     : parts.join(" · ") + "." + rateNote;
   state.lastPayslip = { employee, pay, ps, validation };
+  renderInvoiceFields(ps, validation);
 
   // Barra validazione
   const monthLabel = monthName(state.payMonth);
@@ -1633,6 +1680,25 @@ function renderPayslip(employee, pay) {
   [...refs.payItemForm.elements].forEach((el) => { el.disabled = Boolean(validation); });
 
   renderInvoiceHistory(employee, pay);
+}
+
+function renderInvoiceFields(ps, validation) {
+  const d = validation?.details || {};
+  const locked = Boolean(validation);
+  const vals = locked
+    ? { number: d.invoice_number || "", description: d.description || "", days: d.days_edited ? String(validation.worked_days) : "" }
+    : { number: ps.invoiceNo, description: ps.description, days: ps.daysEdited ? String(ps.worked) : "" };
+  const set = (input, value) => { if (document.activeElement !== input) input.value = value; };
+  set(refs.payInvNumber, vals.number);
+  set(refs.payInvDesc, vals.description);
+  set(refs.payInvDays, vals.days);
+  refs.payInvNumber.placeholder = invoiceNumber(state.payMonth);
+  refs.payInvDesc.placeholder = defaultInvoiceDescription(state.payMonth, ps.payType !== "fixed");
+  refs.payInvDays.placeholder = fmtDays(ps.computedWorked);
+  refs.payInvDaysHint.textContent = `Calcolati: ${fmtDays(ps.computedWorked)} (vuoto = automatico)`;
+  refs.payInvDaysWrap.classList.toggle("hidden", ps.payType === "fixed");
+  refs.payInvoiceForm.classList.toggle("is-locked", locked);
+  [...refs.payInvoiceForm.elements].forEach((el) => { el.disabled = locked; });
 }
 
 function syncPayItemForm() {
@@ -1744,6 +1810,9 @@ async function validateMonth() {
     bonus_amount: Math.round(ps.bonus * 100) / 100,
     details: {
       pay_type: ps.payType,
+      invoice_number: ps.invoiceNo || invoiceNumber(state.payMonth),
+      description: ps.description || "",
+      days_edited: ps.daysEdited,
       fixed_monthly: Math.round(ps.fixedMonthly * 100) / 100,
       working_days: ps.workingDays, ferie: ps.ferie, unpaid_ferie: ps.unpaidFerie,
       permessi: ps.permessi, malattia: ps.malattia,
@@ -2033,12 +2102,20 @@ function invoiceNumber(ym) {
   return `INV-${ym.replace("-", "")}`;
 }
 
+function defaultInvoiceDescription(ym, daily) {
+  return daily ? `Services - ${monthNameEn(ym)} (days worked)` : `Services - ${monthNameEn(ym)}`;
+}
+
+function invoiceNumberOf(v, ym) {
+  return (v.details && v.details.invoice_number) || invoiceNumber(ym);
+}
+
 // Righe in inglese per il template "Tax Invoice"
 function invoiceLinesEn(v, ym) {
   const period = monthNameEn(ym);
   return invoiceLines(v).map((l, idx) => {
     let desc = l.desc;
-    if (idx === 0) desc = l.days != null ? `Services - ${period} (days worked)` : `Services - ${period}`;
+    if (idx === 0) desc = (v.details && v.details.description) || defaultInvoiceDescription(ym, l.days != null);
     else desc = desc
       .replace(/^Ferie non godute \(liquidazione\)/, "Unused holidays (settlement)")
       .replace(/^Rimborso/, "Expense refund");
@@ -2068,7 +2145,7 @@ async function buildInvoicePdf({ employee, pay, v, ym }) {
 
   // Intestazione a destra
   doc.setFont("helvetica", "normal").setFontSize(30).setTextColor(20).text("TAX INVOICE", R, 80, { align: "right" });
-  doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(40).text(`# ${invoiceNumber(ym)}`, R, 98, { align: "right" });
+  doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(40).text(`# ${invoiceNumberOf(v, ym)}`, R, 98, { align: "right" });
   doc.setFontSize(8).text("Balance Due", R, 128, { align: "right" });
   doc.setFontSize(12).text(`€${fmtNumPdf(total)}`, R, 144, { align: "right" });
 
@@ -2196,6 +2273,8 @@ async function generateInvoice() {
     worked_days: ps.worked,
     details: {
       pay_type: ps.payType,
+      invoice_number: ps.invoiceNo || invoiceNumber(state.payMonth),
+      description: ps.description || "",
       base: Math.round(ps.base * 100) / 100,
       items: ps.items.map((i) => ({ kind: i.kind, description: i.description, days: i.days, amount: i.amount }))
     }
@@ -2206,7 +2285,7 @@ async function generateInvoice() {
   try {
     const doc = await buildInvoicePdf({ employee, pay, v, ym: state.payMonth });
     const surname = (pay.billingName || employee.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
-    const fileName = `${invoiceNumber(state.payMonth)}_${surname}.pdf`;
+    const fileName = `${invoiceNumberOf(v, state.payMonth).replace(/[^\w.-]+/g, "_")}_${surname}.pdf`;
     doc.save(fileName);
     setStatus(refs.payStatus, `Fattura ${fileName} scaricata (${fmtEur(v.amount)}).`, "success");
   } catch (err) {
@@ -2289,7 +2368,7 @@ async function sendInvoice() {
   try {
     const doc = await buildInvoicePdf({ employee, pay, v, ym: state.payMonth });
     const surname = (pay.billingName || employee.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
-    fileName = `${invoiceNumber(state.payMonth)}_${surname}.pdf`;
+    fileName = `${invoiceNumberOf(v, state.payMonth).replace(/[^\w.-]+/g, "_")}_${surname}.pdf`;
     emlName = fileName.replace(/\.pdf$/, ".eml");
     const eml = buildEml({
       to, subject, fileName,
