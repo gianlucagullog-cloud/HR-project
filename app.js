@@ -2093,6 +2093,9 @@ function fmtEurPdf(v) {
 }
 
 // Committente fisso di tutte le fatture
+// Mittente delle email di invio fattura (account Outlook)
+const INVOICE_SENDER = "gianluca.gullo@marathonbet.it";
+
 const INVOICE_BILL_TO = {
   name: "Revando Limited",
   lines: ["Room 1403, West Tower, Shun Tak Centre", "168 Connaught Road Central", "Hong Kong"]
@@ -2328,6 +2331,7 @@ function buildEml({ to, subject, body, fileName, pdfArrayBuffer }) {
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   const boundary = `----=_MBI_${Date.now().toString(36)}`;
   return [
+    `From: ${INVOICE_SENDER}`,
     `To: ${to}`,
     `Subject: =?UTF-8?B?${b64Utf8(subject)}?=`,
     "X-Unsent: 1",
