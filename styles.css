@@ -283,6 +283,9 @@ code {
   background: var(--warning-soft); border: 1px solid #f3dca6; color: var(--ink-2); font-size: 0.9rem;
 }
 .preview-banner.hidden { display: none; }
+.preview-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.preview-as { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 0.85rem; }
+.preview-as select { width: auto; min-width: 200px; padding: 6px 10px; }
 
 /* Role-based visibility */
 body.role-admin .employee-only,
