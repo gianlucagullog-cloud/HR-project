@@ -286,9 +286,46 @@
 
         <!-- SCHEDE DIPENDENTE (admin) -->
         <section class="view-panel admin-only" data-view="employees">
+          <!-- Elenco dipendenti (home della sezione) -->
+          <div id="empDirectory">
+            <div class="page-head">
+              <div>
+                <h1>Dipendenti</h1>
+                <p class="muted">Tutto il team a colpo d'occhio. Clicca un dipendente per aprire la scheda.</p>
+              </div>
+            </div>
+
+            <div class="metrics-grid" id="dirMetrics"></div>
+
+            <article class="card dir-card">
+              <div class="dir-toolbar">
+                <input type="search" id="dirSearch" placeholder="Cerca per nome, ruolo o email" />
+                <select id="dirDept"><option value="">Tutti i dipartimenti</option></select>
+                <span class="muted" id="dirCount"></span>
+              </div>
+              <div class="table-wrap">
+                <table class="dir-table">
+                  <thead>
+                    <tr>
+                      <th>Dipendente</th>
+                      <th>Ruolo / Dipartimento</th>
+                      <th class="num">Compenso</th>
+                      <th class="num">Ferie residue</th>
+                      <th class="num" id="dirMonthHead">Fattura del mese</th>
+                      <th>Stato</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dirBody"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+
+          <div id="empDetail" class="hidden">
           <div class="page-head">
             <div>
-              <h1>Schede dipendente</h1>
+              <button type="button" class="link-button dir-back" id="empBack">← Tutti i dipendenti</button>
+              <h1>Scheda dipendente</h1>
               <p class="muted">Dati contrattuali, saldo ferie, fatture mensili e fatturato.</p>
             </div>
             <label class="emp-picker">
@@ -512,6 +549,7 @@
               </div>
               <p class="metric-detail">Clicca un mese per aprirne la simulazione.</p>
             </article>
+          </div>
           </div>
         </section>
 
