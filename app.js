@@ -29,7 +29,9 @@ const state = {
   payItemsAll: [],        // tutte le voci del dipendente selezionato
   validations: [],        // mesi validati del dipendente selezionato
   leaveAdj: {},           // "employeeId|anno" -> giorni godute azzerati
-  myValidations: []       // fatture validate del dipendente loggato ("La mia scheda")
+  myValidations: [],      // fatture validate del dipendente loggato ("La mia scheda")
+  myItems: [],            // voci extra (rimborsi ecc.) del dipendente loggato
+  myMonth: ""             // mese della simulazione in "La mia scheda" (YYYY-MM)
 };
 
 const refs = {
@@ -272,6 +274,22 @@ function bindEvents() {
   refs.myCard.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-my-pdf]");
     if (btn) downloadMyInvoice(btn.dataset.myPdf, btn);
+    const gen = e.target.closest("#myGenerate");
+    if (gen) generateMyInvoice(gen);
+  });
+  // La mia scheda: simulazione fattura (mese, numero, descrizione)
+  refs.myCard.addEventListener("input", (e) => {
+    if (!state.profile) return;
+    if (e.target.id === "myMonth") {
+      if (!e.target.value) return;
+      state.myMonth = e.target.value;
+      renderMySim();
+    } else if (e.target.id === "myInvNumber" || e.target.id === "myInvDesc") {
+      if (mySimData().validated) return;
+      setPayOverride(state.profile.id, state.myMonth,
+        { [e.target.id === "myInvNumber" ? "number" : "description"]: e.target.value.trim() });
+      renderMySim();
+    }
   });
 
   // Main nav + inline link-buttons with data-view-target
@@ -678,10 +696,109 @@ async function loadMyCard() {
     if (!adj.error) adj.data.forEach((r) => { state.leaveAdj[`${r.employee_id}|${r.year}`] = Number(r.used_offset) || 0; });
   }
 
-  const val = await supabaseClient.from("payslip_validations").select("*")
-    .eq("employee_id", me).order("month", { ascending: false });
+  const [val, items] = await Promise.all([
+    supabaseClient.from("payslip_validations").select("*")
+      .eq("employee_id", me).order("month", { ascending: false }),
+    supabaseClient.from("payslip_items").select("id, month, kind, description, days, amount")
+      .eq("employee_id", me).order("created_at", { ascending: true })
+  ]);
   state.myValidations = val.error ? [] : val.data;
+  state.myItems = items.error ? [] : items.data;
   renderMyCard();
+}
+
+// Simulazione fattura del dipendente loggato per il mese scelto
+function mySimData() {
+  const me = myEmployee();
+  const pay = getPay(me.id);
+  if (!state.myMonth) state.myMonth = currentYm();
+  const ym = state.myMonth;
+  const validation = state.myValidations.find((v) => v.month.slice(0, 7) === ym);
+  const saved = state.payItemsAll;
+  state.payItemsAll = state.myItems || [];
+  const ps = computePayslip(me, pay, ym);
+  state.payItemsAll = saved;
+  const v = validation || {
+    amount: ps.total,
+    daily_rate: Math.round(ps.rate * 100) / 100,
+    worked_days: ps.worked,
+    details: {
+      pay_type: ps.payType,
+      invoice_number: ps.invoiceNo || invoiceNumber(ym),
+      description: ps.description || "",
+      base: Math.round(ps.base * 100) / 100,
+      items: ps.items.map((i) => ({ kind: i.kind, description: i.description, days: i.days, amount: i.amount }))
+    }
+  };
+  return { me, pay, ym, ps, v, validated: Boolean(validation) };
+}
+
+function renderMySim() {
+  const body = document.getElementById("mySimBody");
+  if (!body || !state.profile) return;
+  const { pay, ym, ps, v, validated } = mySimData();
+  const d = v.details || {};
+
+  const num = document.getElementById("myInvNumber");
+  const desc = document.getElementById("myInvDesc");
+  const keep = (input, value) => { if (document.activeElement !== input) input.value = value; };
+  keep(num, validated ? (d.invoice_number || "") : ps.invoiceNo);
+  keep(desc, validated ? (d.description || "") : ps.description);
+  num.placeholder = invoiceNumber(ym);
+  desc.placeholder = defaultInvoiceDescription(ym, ps.payType !== "fixed");
+  num.disabled = desc.disabled = validated;
+
+  const lines = invoiceLinesEn(v, ym);
+  const daysNote = ps.payType === "fixed"
+    ? `Salario annuo ${fmtEur(pay.annualSalary)} ÷ 12. Ferie, permessi e malattia non riducono la fattura.`
+    : `Giorni lavorativi ${ps.workingDays} − ferie ${fmtDays(ps.ferie)} − permessi ${fmtDays(ps.permessi)} − malattia ${fmtDays(ps.malattia)} = ${fmtDays(ps.computedWorked)} giorni lavorati.`;
+  const missing = [!pay.iban && "IBAN", !pay.billingAddress && "indirizzo"].filter(Boolean);
+
+  body.innerHTML = `
+    <div class="validation-box ${validated ? "validated" : ""}">
+      <div>
+        <strong>${validated ? `✓ ${monthName(ym)} validato dall'HR: ${fmtEur(v.amount)}` : `${monthName(ym)}: simulazione`}</strong>
+        <span class="metric-detail">${validated
+          ? "Importo definitivo: la fattura va emessa per questo importo."
+          : "Importo indicativo: diventa definitivo quando l'HR lo valida."}</span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="payslip-table">
+        <thead><tr><th>Descrizione</th><th class="num">Q.tà</th><th class="num">Tariffa</th><th class="num">Importo</th></tr></thead>
+        <tbody>
+          ${lines.map((l) => `
+            <tr>
+              <td>${escapeHtml(l.desc)}</td>
+              <td class="num">${fmtDays(l.qty)}</td>
+              <td class="num">${fmtEur(l.rate)}</td>
+              <td class="num">${fmtEur(l.amount)}</td>
+            </tr>`).join("")}
+        </tbody>
+        <tfoot><tr class="pay-total"><td>Totale</td><td></td><td></td><td class="num">${fmtEur(v.amount)}</td></tr></tfoot>
+      </table>
+    </div>
+    <p class="metric-detail">${daysNote} Intestata a ${INVOICE_BILL_TO.name}.</p>
+    ${missing.length ? `<p class="dir-warn">Mancano nella tua scheda: ${missing.join(", ")}. Chiedi all'HR di completarla prima di emettere la fattura.</p>` : ""}`;
+
+  const gen = document.getElementById("myGenerate");
+  if (gen) gen.disabled = !(Number(v.amount) > 0);
+}
+
+async function generateMyInvoice(btn) {
+  const { me, pay, ym, v } = mySimData();
+  if (!(Number(v.amount) > 0)) return;
+  btn.disabled = true;
+  setStatus(refs.myStatus, "");
+  try {
+    const doc = await buildInvoicePdf({ employee: me, pay, v, ym });
+    const surname = (pay.billingName || me.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
+    doc.save(`${invoiceNumberOf(v, ym).replace(/[^\w.-]+/g, "_")}_${surname}.pdf`);
+  } catch (err) {
+    setStatus(refs.myStatus, `PDF non generato: ${err.message}`, "error");
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function renderMyCard() {
@@ -771,6 +888,27 @@ function renderMyCard() {
       </article>
     </div>
 
+    <article class="card" id="mySimCard">
+      <div class="card-head">
+        <h3>Simula / genera fattura</h3>
+        <div class="payslip-tools">
+          <input type="month" id="myMonth" value="${state.myMonth || currentYm()}" />
+          <button type="button" class="primary-button" id="myGenerate">Genera fattura</button>
+        </div>
+      </div>
+      <form class="pay-item-form pay-invoice-form" autocomplete="off" onsubmit="return false">
+        <label>
+          <span>Numero fattura</span>
+          <input type="text" id="myInvNumber" />
+        </label>
+        <label class="grow">
+          <span>Descrizione attività</span>
+          <input type="text" id="myInvDesc" />
+        </label>
+      </form>
+      <div id="mySimBody"></div>
+    </article>
+
     <article class="card">
       <div class="card-head">
         <h3>Le mie fatture</h3>
@@ -778,6 +916,7 @@ function renderMyCard() {
       </div>
       ${invoices}
     </article>`;
+  renderMySim();
 }
 
 async function downloadMyInvoice(id, btn) {
