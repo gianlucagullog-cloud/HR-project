@@ -737,6 +737,8 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .pay-item-form label.grow { flex: 1; min-width: 200px; }
 .pay-item-form span { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
 #payStatus { margin-top: 8px; }
+.pay-invoice-form { padding-top: 0; border-top: 0; margin-bottom: 14px; }
+.pay-invoice-form small { font-size: 0.75rem; }
 
 @media (max-width: 860px) {
   .emp-picker { min-width: 0; width: 100%; }
