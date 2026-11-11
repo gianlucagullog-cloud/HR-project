@@ -274,6 +274,16 @@ code {
   margin-bottom: 4px;
 }
 
+/* Anteprima vista dipendente (solo admin) */
+.role-switch { white-space: nowrap; }
+.preview-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft); border: 1px solid #f3dca6; color: var(--ink-2); font-size: 0.9rem;
+}
+.preview-banner.hidden { display: none; }
+
 /* Role-based visibility */
 body.role-admin .employee-only,
 body.role-employee .admin-only {
