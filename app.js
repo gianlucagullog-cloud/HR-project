@@ -65,6 +65,8 @@ const refs = {
   myStatus: el("myStatus"),
   previewBanner: el("previewBanner"),
   previewExit: el("previewExit"),
+  previewAs: el("previewAs"),
+  previewText: el("previewText"),
   userChip: el("userChip"),
   navButtons: [...document.querySelectorAll(".nav-item")],
   panels: [...document.querySelectorAll(".view-panel")],
@@ -269,6 +271,14 @@ function bindEvents() {
   // Admin: anteprima "vista dipendente" e ritorno
   refs.roleSwitch.addEventListener("click", () => setEmployeePreview(!state.previewEmployee));
   refs.previewExit.addEventListener("click", () => setEmployeePreview(false));
+  refs.previewAs.addEventListener("change", () => {
+    state.previewAsId = refs.previewAs.value;
+    state.myMonth = "";
+    syncRoleUI();
+    populateEmployeeOptions();
+    render();
+    if (state.activeView === "mycard") loadMyCard();
+  });
 
   // La mia scheda: scarica PDF di una fattura validata
   refs.myCard.addEventListener("click", (e) => {
@@ -286,7 +296,7 @@ function bindEvents() {
       renderMySim();
     } else if (e.target.id === "myInvNumber" || e.target.id === "myInvDesc") {
       if (mySimData().validated) return;
-      setPayOverride(state.profile.id, state.myMonth,
+      setPayOverride(viewerId(), state.myMonth,
         { [e.target.id === "myInvNumber" ? "number" : "description"]: e.target.value.trim() });
       renderMySim();
     }
@@ -475,6 +485,7 @@ function resetToAuthScreen() {
   state.previewEmployee = false;
   refs.roleSwitch.classList.add("hidden");
   refs.previewBanner.classList.add("hidden");
+  state.previewAsId = "";
   switchAuthTab("login");
 }
 
@@ -656,6 +667,17 @@ function uiRole() {
   return state.profile.role === "admin" && state.previewEmployee ? "employee" : state.profile.role;
 }
 
+// Dipendente di cui si sta guardando il portale: se stessi, oppure quello
+// scelto dall'admin in "Vista dipendente".
+function viewerId() {
+  if (!state.profile) return null;
+  return state.previewEmployee && state.previewAsId ? state.previewAsId : state.profile.id;
+}
+
+function viewerProfile() {
+  return getEmployeeById(viewerId()) || state.profile;
+}
+
 function setEmployeePreview(on) {
   if (state.profile?.role !== "admin") return;
   state.previewEmployee = Boolean(on);
@@ -672,13 +694,13 @@ function setEmployeePreview(on) {
 // =====================================================================
 
 function myEmployee() {
-  const p = state.profile;
+  const p = viewerProfile();
   return getEmployeeById(p.id) || { id: p.id, fullName: p.fullName, email: p.email, annualQuota: p.annualQuota };
 }
 
 async function loadMyCard() {
   if (!supabaseClient || !state.profile) return;
-  const me = state.profile.id;
+  const me = viewerId();
   setStatus(refs.myStatus, "");
 
   if (state.profile.role !== "admin") {
@@ -942,7 +964,7 @@ function populateEmployeeOptions() {
 
   const visible = uiRole() === "admin"
     ? state.employees
-    : state.employees.filter((e) => e.id === state.profile.id);
+    : state.employees.filter((e) => e.id === viewerId());
 
   const options = visible
     .map((e) => `<option value="${e.id}">${escapeHtml(e.fullName)}</option>`)
@@ -954,7 +976,7 @@ function populateEmployeeOptions() {
   }
 
   if (uiRole() !== "admin") {
-    refs.employeeSelect.value = state.profile.id;
+    refs.employeeSelect.value = viewerId();
     refs.employeeSelect.disabled = true;
   } else {
     refs.employeeSelect.disabled = false;
@@ -967,6 +989,16 @@ function syncRoleUI() {
   refs.roleSwitch.classList.toggle("hidden", !isRealAdmin);
   refs.roleSwitch.textContent = state.previewEmployee ? "Torna ad admin" : "Vista dipendente";
   refs.previewBanner.classList.toggle("hidden", !(isRealAdmin && state.previewEmployee));
+  if (isRealAdmin && state.previewEmployee) {
+    if (state.previewAsId && !getEmployeeById(state.previewAsId)) state.previewAsId = "";
+    const current = viewerId();
+    refs.previewAs.innerHTML = [...state.employees]
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, "it"))
+      .map((e) => `<option value="${e.id}" ${e.id === current ? "selected" : ""}>${escapeHtml(e.fullName)}${e.id === state.profile.id ? " (tu)" : ""}</option>`)
+      .join("");
+    const self = current === state.profile.id;
+    refs.previewText.innerHTML = `<strong>Vista dipendente</strong> · stai vedendo il portale come lo vede ${self ? "un dipendente, con i tuoi dati" : `<strong>${escapeHtml(viewerProfile().fullName)}</strong>`}. Le richieste inviate sono reali${self ? "" : " e a suo nome"}.`;
+  }
   const allowed = role === "admin"
     ? ["dashboard", "approvals", "history", "team", "employees", "users"]
     : ["request", "mycard", "history"];
@@ -1130,7 +1162,7 @@ async function updateRequestStatus(id, status) {
 async function submitRequest() {
   if (!state.profile) return;
 
-  const employeeId = refs.employeeSelect.value || state.profile.id;
+  const employeeId = refs.employeeSelect.value || viewerId();
   const startDate  = refs.startDate.value;
   const endDate    = refs.endDate.value;
   const workingDays = countWorkingDays(startDate, endDate);
@@ -1194,12 +1226,13 @@ function countWorkingDays(startDate, endDate) {
 
 function renderQuotaChip() {
   if (!refs.quotaChip || !state.profile) return;
+  const viewer = viewerProfile();
   const approvedDays = state.requests
-    .filter((r) => r.employeeId === state.profile.id && r.status === "Approved")
+    .filter((r) => r.employeeId === viewer.id && r.status === "Approved")
     .filter((r) => r.startDate.startsWith(String(new Date().getFullYear())))
     .reduce((s, r) => s + r.workingDays, 0);
-  const remaining = Math.max(0, state.profile.annualQuota - approvedDays);
-  refs.quotaChip.textContent = `Quota residua: ${remaining}/${state.profile.annualQuota} gg`;
+  const remaining = Math.max(0, viewer.annualQuota - approvedDays);
+  refs.quotaChip.textContent = `Quota residua: ${remaining}/${viewer.annualQuota} gg`;
 }
 
 // =====================================================================
@@ -1215,7 +1248,7 @@ function renderHistory() {
   const isEmployee = uiRole() !== "admin";
 
   state.historyRows = state.requests
-    .filter((r) => isEmployee ? r.employeeId === state.profile.id : true)
+    .filter((r) => isEmployee ? r.employeeId === viewerId() : true)
     .filter((r) => statusFilter === "all" ? true : r.status === statusFilter)
     .filter((r) => employeeFilter === "all" ? true : r.employeeId === employeeFilter)
     .filter((r) => !startFilter ? true : r.startDate >= startFilter)
