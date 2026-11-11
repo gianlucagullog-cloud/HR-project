@@ -105,6 +105,7 @@
         <nav class="main-nav" aria-label="Navigazione">
           <button class="nav-item is-active admin-only" data-view-target="dashboard" type="button">Dashboard</button>
           <button class="nav-item employee-only" data-view-target="request" type="button">Nuova richiesta</button>
+          <button class="nav-item employee-only" data-view-target="mycard" type="button">La mia scheda</button>
           <button class="nav-item admin-only" data-view-target="approvals" type="button">Approvazioni <span class="badge-count hidden" id="pendingBadge">0</span></button>
           <button class="nav-item" data-view-target="history" type="button">Storico</button>
           <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
@@ -278,6 +279,18 @@
         </section>
 
         <!-- TEAM (admin) -->
+        <!-- LA MIA SCHEDA (employee, sola lettura) -->
+        <section class="view-panel employee-only" data-view="mycard">
+          <div class="page-head">
+            <div>
+              <h1>La mia scheda</h1>
+              <p class="muted">I tuoi dati contrattuali, il saldo ferie e le tue fatture. Per correggere qualcosa contatta l'HR.</p>
+            </div>
+          </div>
+          <p class="status-message" id="myStatus"></p>
+          <div id="myCard" class="emp-sheet"></div>
+        </section>
+
         <section class="view-panel admin-only" data-view="team">
           <div class="page-head">
             <div>
