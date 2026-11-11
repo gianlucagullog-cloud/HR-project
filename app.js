@@ -31,7 +31,9 @@ const state = {
   leaveAdj: {},           // "employeeId|anno" -> giorni godute azzerati
   myValidations: [],      // fatture validate del dipendente loggato ("La mia scheda")
   myItems: [],            // voci extra (rimborsi ecc.) del dipendente loggato
-  myMonth: ""             // mese della simulazione in "La mia scheda" (YYYY-MM)
+  myMonth: "",            // mese della simulazione in "La mia scheda" (YYYY-MM)
+  drafts: {},             // "employeeId|YYYY-MM" -> dati fattura compilati (tabella invoice_drafts)
+  draftsAvailable: true   // false se la tabella invoice_drafts non esiste ancora
 };
 
 const refs = {
@@ -286,6 +288,8 @@ function bindEvents() {
     if (btn) downloadMyInvoice(btn.dataset.myPdf, btn);
     const gen = e.target.closest("#myGenerate");
     if (gen) generateMyInvoice(gen);
+    const undo = e.target.closest("[data-my-unvalidate]");
+    if (undo) cancelMyValidation(undo);
   });
   // La mia scheda: simulazione fattura (mese, numero, descrizione)
   refs.myCard.addEventListener("input", (e) => {
@@ -294,10 +298,10 @@ function bindEvents() {
       if (!e.target.value) return;
       state.myMonth = e.target.value;
       renderMySim();
-    } else if (e.target.id === "myInvNumber" || e.target.id === "myInvDesc") {
-      if (mySimData().validated) return;
-      setPayOverride(viewerId(), state.myMonth,
-        { [e.target.id === "myInvNumber" ? "number" : "description"]: e.target.value.trim() });
+    } else {
+      const key = { myInvNumber: "number", myInvDesc: "description", myInvDays: "days", myInvTotal: "total" }[e.target.id];
+      if (!key || mySimData().validated) return;
+      setPayOverride(viewerId(), state.myMonth, { [key]: e.target.value.trim() });
       renderMySim();
     }
   });
@@ -574,6 +578,8 @@ async function refreshData() {
     }
   }
 
+  if (state.profile.role === "admin") await loadDrafts();
+
   populateEmployeeOptions();
   render();
 
@@ -726,6 +732,7 @@ async function loadMyCard() {
   ]);
   state.myValidations = val.error ? [] : val.data;
   state.myItems = items.error ? [] : items.data;
+  if (state.profile.role !== "admin") await loadDrafts(me);
   renderMyCard();
 }
 
@@ -763,12 +770,21 @@ function renderMySim() {
 
   const num = document.getElementById("myInvNumber");
   const desc = document.getElementById("myInvDesc");
+  const days = document.getElementById("myInvDays");
+  const total = document.getElementById("myInvTotal");
   const keep = (input, value) => { if (document.activeElement !== input) input.value = value; };
   keep(num, validated ? (d.invoice_number || "") : ps.invoiceNo);
   keep(desc, validated ? (d.description || "") : ps.description);
+  keep(days, validated ? (d.days_edited ? String(v.worked_days) : "") : (ps.daysEdited ? String(ps.worked) : ""));
+  keep(total, validated ? (d.total_edited ? String(v.amount) : "") : (ps.totalEdited ? String(ps.total) : ""));
   num.placeholder = invoiceNumber(ym);
   desc.placeholder = defaultInvoiceDescription(ym, ps.payType !== "fixed");
-  num.disabled = desc.disabled = validated;
+  days.placeholder = fmtDays(ps.computedWorked);
+  total.placeholder = ps.computedTotal.toFixed(2);
+  document.getElementById("myInvDaysHint").textContent = `Calcolati: ${fmtDays(ps.computedWorked)} (vuoto = automatico)`;
+  document.getElementById("myInvTotalHint").textContent = `Calcolato: ${fmtEur(ps.computedTotal)} (vuoto = automatico)`;
+  document.getElementById("myInvDaysWrap").classList.toggle("hidden", ps.payType === "fixed");
+  num.disabled = desc.disabled = days.disabled = total.disabled = validated;
 
   const lines = invoiceLinesEn(v, ym);
   const daysNote = ps.payType === "fixed"
@@ -779,11 +795,13 @@ function renderMySim() {
   body.innerHTML = `
     <div class="validation-box ${validated ? "validated" : ""}">
       <div>
-        <strong>${validated ? `✓ ${monthName(ym)} validato dall'HR: ${fmtEur(v.amount)}` : `${monthName(ym)}: simulazione`}</strong>
+        <strong>${validated ? `✓ ${monthName(ym)} validato dall'HR: ${fmtEur(v.amount)}` : `${monthName(ym)}: da validare`}</strong>
         <span class="metric-detail">${validated
-          ? "Importo definitivo: la fattura va emessa per questo importo."
-          : "Importo indicativo: diventa definitivo quando l'HR lo valida."}</span>
+          ? "Importo definitivo. Per correggere i dati annulla la validazione: l'HR dovrà validare di nuovo."
+          : "Compila numero, descrizione, giorni e importo: l'HR li vede e valida il mese."}</span>
+        ${validated && v.sent_at ? `<span class="metric-detail sent-line">✉ Inviata il ${formatDate(v.sent_at)}</span>` : ""}
       </div>
+      ${validated ? `<button type="button" class="action-button neutral" data-my-unvalidate="${v.id}">Annulla validazione</button>` : ""}
     </div>
     <div class="table-wrap">
       <table class="payslip-table">
@@ -805,6 +823,33 @@ function renderMySim() {
 
   const gen = document.getElementById("myGenerate");
   if (gen) gen.disabled = !(Number(v.amount) > 0);
+}
+
+async function cancelMyValidation(btn) {
+  const v = state.myValidations.find((x) => String(x.id) === String(btn.dataset.myUnvalidate));
+  if (!v) return;
+  const ym = v.month.slice(0, 7);
+  const sentNote = v.sent_at ? `\n\nATTENZIONE: la fattura risulta già inviata il ${formatDate(v.sent_at)}.` : "";
+  if (!confirm(`Annullare la validazione di ${monthName(ym)} (${fmtEur(v.amount)})?\n\nPotrai correggere i dati della fattura; poi l'HR dovrà validare di nuovo il mese.${sentNote}`)) return;
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.from("payslip_validations")
+    .delete().eq("id", v.id).eq("employee_id", viewerId()).select("id");
+  if (error || !data?.length) {
+    btn.disabled = false;
+    return setStatus(refs.myStatus, error
+      ? `Validazione non annullata: ${error.message}`
+      : "Validazione non annullata: funzione non ancora attiva, contatta l'HR.", "error");
+  }
+  // Riporta nei campi i dati che erano stati validati, così si possono correggere
+  const d = v.details || {};
+  setPayOverride(viewerId(), ym, {
+    number: d.invoice_number || "",
+    description: d.description || "",
+    days: d.days_edited ? String(v.worked_days) : "",
+    total: d.total_edited ? String(v.amount) : ""
+  });
+  await loadMyCard();
+  setStatus(refs.myStatus, `Validazione di ${monthName(ym)} annullata: ora puoi correggere i dati.`, "success");
 }
 
 async function generateMyInvoice(btn) {
@@ -926,6 +971,16 @@ function renderMyCard() {
         <label class="grow">
           <span>Descrizione attività</span>
           <input type="text" id="myInvDesc" />
+        </label>
+        <label id="myInvDaysWrap">
+          <span>Giorni lavorati</span>
+          <input type="number" id="myInvDays" min="0" max="31" step="0.5" />
+          <small class="metric-detail" id="myInvDaysHint"></small>
+        </label>
+        <label>
+          <span>Importo totale (€)</span>
+          <input type="number" id="myInvTotal" min="0" step="0.01" />
+          <small class="metric-detail" id="myInvTotalHint"></small>
         </label>
       </form>
       <div id="mySimBody"></div>
@@ -1770,19 +1825,92 @@ function readPayOverrides() {
   try { return JSON.parse(localStorage.getItem(PAY_OV_KEY)) || {}; } catch { return {}; }
 }
 
-function getPayOverride(employeeId, ym) {
-  return readPayOverrides()[`${employeeId}|${ym}`] || {};
+// Dati fattura condivisi HR/dipendente (tabella invoice_drafts). Se la tabella
+// non c'è ancora, si usa il salvataggio locale del browser come prima.
+async function loadDrafts(employeeId) {
+  if (!supabaseClient) return;
+  let q = supabaseClient.from("invoice_drafts").select("employee_id, month, invoice_number, description, days, total");
+  if (employeeId) q = q.eq("employee_id", employeeId);
+  const { data, error } = await q;
+  if (error) {
+    state.draftsAvailable = !/invoice_drafts|relation|does not exist/i.test(error.message || "");
+    console.error(error);
+    return;
+  }
+  state.draftsAvailable = true;
+  const next = employeeId
+    ? Object.fromEntries(Object.entries(state.drafts).filter(([k]) => !k.startsWith(`${employeeId}|`)))
+    : {};
+  data.forEach((r) => {
+    const d = {
+      number: r.invoice_number || "",
+      description: r.description || "",
+      days: r.days == null ? "" : String(Number(r.days)),
+      total: r.total == null ? "" : String(Number(r.total))
+    };
+    Object.keys(d).forEach((k) => { if (d[k] === "") delete d[k]; });
+    next[`${r.employee_id}|${r.month.slice(0, 7)}`] = d;
+  });
+  state.drafts = next;
+
+  // Admin: porta nel database i dati fattura salvati finora solo in questo browser
+  if (!employeeId && state.profile?.role === "admin") {
+    Object.entries(readPayOverrides()).forEach(([k, val]) => {
+      if (next[k] || !val || !Object.keys(val).length) return;
+      const [emp, ym] = k.split("|");
+      if (!emp || !/^\d{4}-\d{2}$/.test(ym || "")) return;
+      state.drafts[k] = { ...val };
+      saveDraft(emp, ym);
+    });
+  }
 }
 
+function getPayOverride(employeeId, ym) {
+  const key = `${employeeId}|${ym}`;
+  if (state.drafts[key]) return { ...state.drafts[key] };
+  return readPayOverrides()[key] || {};
+}
+
+const draftTimers = {};
+
 function setPayOverride(employeeId, ym, patch) {
+  const key = `${employeeId}|${ym}`;
+  const cur = { ...getPayOverride(employeeId, ym), ...patch };
+  Object.keys(cur).forEach((k) => { if (cur[k] === "" || cur[k] == null) delete cur[k]; });
   try {
     const all = readPayOverrides();
-    const key = `${employeeId}|${ym}`;
-    const cur = { ...(all[key] || {}), ...patch };
-    Object.keys(cur).forEach((k) => { if (cur[k] === "" || cur[k] == null) delete cur[k]; });
     if (Object.keys(cur).length) all[key] = cur; else delete all[key];
     localStorage.setItem(PAY_OV_KEY, JSON.stringify(all));
   } catch { /* storage non disponibile */ }
+  if (!state.draftsAvailable || !supabaseClient) return;
+  state.drafts[key] = cur;
+  clearTimeout(draftTimers[key]);
+  draftTimers[key] = setTimeout(() => saveDraft(employeeId, ym), 700);
+}
+
+async function saveDraft(employeeId, ym) {
+  const d = state.drafts[`${employeeId}|${ym}`] || {};
+  const month = `${ym}-01`;
+  const num = (v) => (v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100);
+  const empty = !Object.keys(d).length;
+  const { error } = empty
+    ? await supabaseClient.from("invoice_drafts").delete().eq("employee_id", employeeId).eq("month", month)
+    : await supabaseClient.from("invoice_drafts").upsert({
+        employee_id: employeeId,
+        month,
+        invoice_number: d.number || "",
+        description: d.description || "",
+        days: num(d.days),
+        total: num(d.total),
+        updated_at: new Date().toISOString(),
+        updated_by: state.profile?.id || null
+      });
+  if (error) {
+    console.error(error);
+    if (/invoice_drafts|relation|does not exist/i.test(error.message || "")) state.draftsAvailable = false;
+    const node = state.activeView === "mycard" ? refs.myStatus : refs.payStatus;
+    setStatus(node, `Dati fattura non salvati: ${error.message}`, "error");
+  }
 }
 
 function computePayslip(employee, pay, ym) {
