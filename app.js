@@ -28,7 +28,8 @@ const state = {
   payItems: [],           // voci del mese selezionato
   payItemsAll: [],        // tutte le voci del dipendente selezionato
   validations: [],        // mesi validati del dipendente selezionato
-  leaveAdj: {}            // "employeeId|anno" -> giorni godute azzerati
+  leaveAdj: {},           // "employeeId|anno" -> giorni godute azzerati
+  myValidations: []       // fatture validate del dipendente loggato ("La mia scheda")
 };
 
 const refs = {
@@ -58,6 +59,8 @@ const refs = {
   appContent: el("appContent"),
   logoutButton: el("logoutButton"),
   roleSwitch: el("roleSwitch"),
+  myCard: el("myCard"),
+  myStatus: el("myStatus"),
   previewBanner: el("previewBanner"),
   previewExit: el("previewExit"),
   userChip: el("userChip"),
@@ -265,11 +268,18 @@ function bindEvents() {
   refs.roleSwitch.addEventListener("click", () => setEmployeePreview(!state.previewEmployee));
   refs.previewExit.addEventListener("click", () => setEmployeePreview(false));
 
+  // La mia scheda: scarica PDF di una fattura validata
+  refs.myCard.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-my-pdf]");
+    if (btn) downloadMyInvoice(btn.dataset.myPdf, btn);
+  });
+
   // Main nav + inline link-buttons with data-view-target
   document.querySelectorAll("[data-view-target]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.viewTarget;
       if (state.activeView === "employees") openDirectory();
+      if (state.activeView === "mycard") loadMyCard();
       syncViewUI();
     });
   });
@@ -639,6 +649,155 @@ function setEmployeePreview(on) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+// =====================================================================
+// LA MIA SCHEDA (dipendente, sola lettura)
+// =====================================================================
+
+function myEmployee() {
+  const p = state.profile;
+  return getEmployeeById(p.id) || { id: p.id, fullName: p.fullName, email: p.email, annualQuota: p.annualQuota };
+}
+
+async function loadMyCard() {
+  if (!supabaseClient || !state.profile) return;
+  const me = state.profile.id;
+  setStatus(refs.myStatus, "");
+
+  if (state.profile.role !== "admin") {
+    const [card, adj] = await Promise.all([
+      supabaseClient.rpc("my_employee_card"),
+      supabaseClient.from("leave_adjustments").select("employee_id, year, used_offset").eq("employee_id", me)
+    ]);
+    if (card.error) {
+      setStatus(refs.myStatus, /my_employee_card|function/i.test(card.error.message)
+        ? "La scheda non è ancora disponibile: l'HR deve completare la configurazione del portale."
+        : card.error.message, "error");
+    } else if (card.data && card.data[0]) {
+      state.payData = { ...state.payData, [me]: { employee_id: me, ...card.data[0] } };
+    }
+    if (!adj.error) adj.data.forEach((r) => { state.leaveAdj[`${r.employee_id}|${r.year}`] = Number(r.used_offset) || 0; });
+  }
+
+  const val = await supabaseClient.from("payslip_validations").select("*")
+    .eq("employee_id", me).order("month", { ascending: false });
+  state.myValidations = val.error ? [] : val.data;
+  renderMyCard();
+}
+
+function renderMyCard() {
+  if (!refs.myCard || !state.profile) return;
+  const me = myEmployee();
+  const hasCard = Boolean(state.payData[me.id]);
+  const pay = getPay(me.id);
+  const fixed = pay.payType === "fixed";
+  const year = new Date().getFullYear();
+  const lb = computeLeaveBalance(me, pay, year);
+  const pct = lb.total ? Math.min(100, Math.round((lb.used / lb.total) * 100)) : 0;
+  const dash = (v) => (v ? escapeHtml(v) : `<span class="muted">-</span>`);
+
+  const kpis = hasCard ? (fixed
+    ? `<div><span class="metric-label">Salario annuo</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>`
+    : `<div><span class="metric-label">Daily rate</span><strong>${pay.dailyRate ? fmtEur(pay.dailyRate) : "-"}</strong></div>
+       <div><span class="metric-label">Salario annuo</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>`) : "";
+
+  const yearTotal = state.myValidations
+    .filter((v) => v.month.startsWith(String(year)))
+    .reduce((s, v) => s + Number(v.amount || 0), 0);
+
+  const invoices = state.myValidations.length ? `
+    <div class="table-wrap">
+      <table class="my-invoices">
+        <thead><tr><th>Mese</th><th>N. fattura</th><th class="num">Importo</th><th>Stato</th><th></th></tr></thead>
+        <tbody>
+          ${state.myValidations.map((v) => {
+            const ym = v.month.slice(0, 7);
+            return `
+              <tr>
+                <td>${monthName(ym)}</td>
+                <td>${escapeHtml(invoiceNumberOf(v, ym))}</td>
+                <td class="num">${fmtEur(v.amount)}</td>
+                <td>${v.sent_at
+                  ? `<span class="badge Approved">Inviata</span> <span class="dir-sub">il ${formatDate(v.sent_at)}</span>`
+                  : `<span class="badge neutral">Validata</span>`}</td>
+                <td class="num"><button type="button" class="ghost-button" data-my-pdf="${v.id}">Scarica PDF</button></td>
+              </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>` : `<p class="empty-state">Nessuna fattura validata finora.</p>`;
+
+  refs.myCard.innerHTML = `
+    <article class="card emp-identity">
+      <div>
+        <h2>${escapeHtml(me.fullName)}</h2>
+        <p class="meta-line">${[pay.jobTitle, pay.department, me.email, pay.contractStart ? `dal ${formatDate(pay.contractStart)}` : null]
+          .filter(Boolean).map(escapeHtml).join(" · ")}</p>
+      </div>
+      <div class="emp-kpis">
+        ${kpis}
+        <div><span class="metric-label">Ferie residue</span><strong>${fmtDays(lb.remaining)} gg</strong></div>
+      </div>
+    </article>
+
+    ${hasCard ? "" : `<article class="card empty-state">La tua scheda contrattuale non è ancora stata compilata dall'HR.</article>`}
+
+    <div class="two-col">
+      <article class="card">
+        <div class="card-head"><h3>Saldo ferie <span class="muted">${year}</span></h3></div>
+        <div class="leave-grid">
+          <div class="metric-card"><span class="metric-label">Totale spettante</span><strong class="metric-value">${fmtDays(lb.total)} gg</strong>
+            <span class="metric-detail">${lb.months < 12 ? `Pro-rata ${lb.months}/12 di ${lb.quota} gg` : `Quota annua ${lb.quota} gg`}</span></div>
+          <div class="metric-card"><span class="metric-label">Godute</span><strong class="metric-value">${fmtDays(lb.used)} gg</strong><span class="metric-detail">Ferie approvate</span></div>
+          <div class="metric-card"><span class="metric-label">In attesa</span><strong class="metric-value">${fmtDays(lb.pending)} gg</strong><span class="metric-detail">Da approvare</span></div>
+          <div class="metric-card"><span class="metric-label">Residue</span><strong class="metric-value ${lb.remaining < 0 ? "negative" : ""}">${fmtDays(lb.remaining)} gg</strong><span class="metric-detail">Totale − godute</span></div>
+        </div>
+        <div class="progress-track"><div class="progress-bar" style="width:${pct}%"></div></div>
+        <p class="metric-detail">Altre assenze approvate nell'anno: Permessi ${fmtDays(lb.permessi)} gg · Malattia ${fmtDays(lb.malattia)} gg</p>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h3>Dati di fatturazione</h3></div>
+        <dl class="my-dl">
+          <dt>Intestatario</dt><dd>${dash(pay.billingName || me.fullName)}</dd>
+          <dt>Indirizzo</dt><dd>${dash(pay.billingAddress)}</dd>
+          <dt>P.IVA / C.F.</dt><dd>${dash(pay.taxId)}</dd>
+          <dt>Email fatture</dt><dd>${dash(pay.billingEmail || me.email)}</dd>
+          <dt>Intestatario conto</dt><dd>${dash(pay.bankHolder || pay.billingName)}</dd>
+          <dt>Banca</dt><dd>${dash(pay.bankName)}</dd>
+          <dt>IBAN</dt><dd>${pay.iban ? escapeHtml(formatIban(pay.iban)) : `<span class="muted">-</span>`}</dd>
+          <dt>BIC / SWIFT</dt><dd>${dash(pay.bic)}</dd>
+        </dl>
+        <p class="metric-detail">Dati errati o mancanti? Scrivi all'HR per aggiornarli.</p>
+      </article>
+    </div>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Le mie fatture</h3>
+        <span class="muted">Totale ${year}: ${fmtEur(yearTotal)}</span>
+      </div>
+      ${invoices}
+    </article>`;
+}
+
+async function downloadMyInvoice(id, btn) {
+  const v = state.myValidations.find((x) => String(x.id) === String(id));
+  if (!v) return;
+  const me = myEmployee();
+  const pay = getPay(me.id);
+  const ym = v.month.slice(0, 7);
+  btn.disabled = true;
+  try {
+    const doc = await buildInvoicePdf({ employee: me, pay, v, ym });
+    const surname = (pay.billingName || me.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
+    doc.save(`${invoiceNumberOf(v, ym).replace(/[^\w.-]+/g, "_")}_${surname}.pdf`);
+  } catch (err) {
+    setStatus(refs.myStatus, `PDF non generato: ${err.message}`, "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function populateEmployeeOptions() {
   if (!state.profile) return;
 
@@ -671,7 +830,7 @@ function syncRoleUI() {
   refs.previewBanner.classList.toggle("hidden", !(isRealAdmin && state.previewEmployee));
   const allowed = role === "admin"
     ? ["dashboard", "approvals", "history", "team", "employees", "users"]
-    : ["request", "history"];
+    : ["request", "mycard", "history"];
 
   if (role && !allowed.includes(state.activeView)) {
     state.activeView = role === "admin" ? "dashboard" : "request";
@@ -702,6 +861,7 @@ function render() {
   renderUsers();
   renderEmployeeSheet();
   renderQuotaChip();
+  if (state.activeView === "mycard") renderMyCard();
   updateWorkingDaysPreview();
   updateBadges();
 }
