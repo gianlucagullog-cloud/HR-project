@@ -21,6 +21,7 @@
         </div>
         <div class="header-title">Leave Management Portal</div>
         <div class="header-session">
+          <button class="ghost-button role-switch hidden" id="roleSwitch" type="button" title="Mostra il portale come lo vede un dipendente">Vista dipendente</button>
           <div class="user-chip" id="userChip">Non connesso</div>
           <button class="ghost-button hidden" id="logoutButton" type="button">Esci</button>
         </div>
@@ -95,6 +96,11 @@
 
       <!-- ========== APP ========== -->
       <section class="app-wrap hidden" id="appContent">
+
+        <div class="preview-banner hidden" id="previewBanner">
+          <span><strong>Vista dipendente</strong> · stai vedendo il portale come lo vede un dipendente, con i tuoi dati. Le richieste inviate sono reali.</span>
+          <button type="button" class="ghost-button" id="previewExit">Torna ad admin</button>
+        </div>
 
         <nav class="main-nav" aria-label="Navigazione">
           <button class="nav-item is-active admin-only" data-view-target="dashboard" type="button">Dashboard</button>
