@@ -708,6 +708,7 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .dir-warn { display: inline-block; margin-top: 3px; color: var(--warning); font-size: 0.75rem; font-weight: 600; }
 .dir-back { padding: 0; margin-bottom: 6px; }
 .negative-text { color: var(--danger); }
+.dir-table .badge { white-space: nowrap; }
 .emp-picker span { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
 
 .emp-sheet { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
