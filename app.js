@@ -172,6 +172,8 @@ const refs = {
   payInvDays: el("payInvDays"),
   payInvDaysWrap: el("payInvDaysWrap"),
   payInvDaysHint: el("payInvDaysHint"),
+  payInvTotal: el("payInvTotal"),
+  payInvTotalHint: el("payInvTotalHint"),
   leaveResetUsed: el("leaveResetUsed"),
   leaveUndoReset: el("leaveUndoReset"),
   leaveResetPending: el("leaveResetPending"),
@@ -1214,7 +1216,7 @@ function bindEmployeeSheetEvents() {
 
   // Dati fattura del mese: numero, descrizione attività, giorni lavorati
   refs.payInvoiceForm.addEventListener("submit", (e) => e.preventDefault());
-  [["payInvNumber", "number"], ["payInvDesc", "description"], ["payInvDays", "days"]].forEach(([id, key]) => {
+  [["payInvNumber", "number"], ["payInvDesc", "description"], ["payInvDays", "days"], ["payInvTotal", "total"]].forEach(([id, key]) => {
     refs[id].addEventListener("input", () => {
       const ctx = state.lastPayslip;
       if (!ctx || ctx.validation) return;
@@ -1432,13 +1434,20 @@ function computePayslip(employee, pay, ym) {
   const items = itemsForMonth(start);
   const bonus = items.reduce((s, i) => s + Number(i.amount || 0), 0);
 
+  // Importo totale modificato a mano: la differenza va sul compenso base
+  const computedTotal = Math.round((base + ferieAmount + bonus) * 100) / 100;
+  const totalOv = ov.total !== undefined && ov.total !== "" && Number.isFinite(Number(ov.total)) && Number(ov.total) >= 0
+    ? Math.round(Number(ov.total) * 100) / 100 : null;
+  if (totalOv != null) base = totalOv - ferieAmount - bonus;
+
   return {
     payType: pay.payType, fixedMonthly, fixedRatio,
     computedWorked, daysEdited: pay.payType !== "fixed" && daysOv != null,
     invoiceNo: ov.number || "", description: ov.description || "",
+    computedTotal, totalEdited: totalOv != null,
     year, rate, start, end, effStart, workingDays, ferie, paidFerie, unpaidFerie,
     permessi, malattia, worked, base, ferieAmount, bonus, items,
-    total: Math.round((base + ferieAmount + bonus) * 100) / 100
+    total: totalOv != null ? totalOv : computedTotal
   };
 }
 
@@ -1595,7 +1604,7 @@ function renderPayslip(employee, pay) {
     <tr>
       <td>Retribuzione giorni lavorati${ps.daysEdited ? ` <span class="muted">(modificati a mano, calcolati ${fmtDays(ps.computedWorked)})</span>` : ""}</td>
       <td class="num">${fmtDays(ps.worked)}</td>
-      <td class="num">${fmtEur(ps.rate)}</td>
+      <td class="num">${fmtEur(ps.totalEdited && ps.worked ? ps.base / ps.worked : ps.rate)}</td>
       <td class="num">${fmtEur(ps.base)}</td>
       <td></td>
     </tr>`];
@@ -1626,7 +1635,9 @@ function renderPayslip(employee, pay) {
   });
 
   refs.payBody.innerHTML = rows.join("");
-  refs.payTotal.textContent = fmtEur(ps.total);
+  refs.payTotal.innerHTML = ps.totalEdited
+    ? `${fmtEur(ps.total)} <span class="muted">(a mano, calcolato ${fmtEur(ps.computedTotal)})</span>`
+    : fmtEur(ps.total);
 
   const parts = [`Giorni lavorativi nel mese: ${ps.workingDays}`];
   if (ps.effStart !== ps.start) parts[0] += ` (dal ${formatDate(ps.effStart)}, inizio contratto)`;
@@ -1686,12 +1697,17 @@ function renderInvoiceFields(ps, validation) {
   const d = validation?.details || {};
   const locked = Boolean(validation);
   const vals = locked
-    ? { number: d.invoice_number || "", description: d.description || "", days: d.days_edited ? String(validation.worked_days) : "" }
-    : { number: ps.invoiceNo, description: ps.description, days: ps.daysEdited ? String(ps.worked) : "" };
+    ? { number: d.invoice_number || "", description: d.description || "", days: d.days_edited ? String(validation.worked_days) : "",
+        total: d.total_edited ? String(validation.amount) : "" }
+    : { number: ps.invoiceNo, description: ps.description, days: ps.daysEdited ? String(ps.worked) : "",
+        total: ps.totalEdited ? String(ps.total) : "" };
   const set = (input, value) => { if (document.activeElement !== input) input.value = value; };
   set(refs.payInvNumber, vals.number);
   set(refs.payInvDesc, vals.description);
   set(refs.payInvDays, vals.days);
+  set(refs.payInvTotal, vals.total);
+  refs.payInvTotal.placeholder = ps.computedTotal.toFixed(2);
+  refs.payInvTotalHint.textContent = `Calcolato: ${fmtEur(ps.computedTotal)} (vuoto = automatico)`;
   refs.payInvNumber.placeholder = invoiceNumber(state.payMonth);
   refs.payInvDesc.placeholder = defaultInvoiceDescription(state.payMonth, ps.payType !== "fixed");
   refs.payInvDays.placeholder = fmtDays(ps.computedWorked);
@@ -1813,6 +1829,7 @@ async function validateMonth() {
       invoice_number: ps.invoiceNo || invoiceNumber(state.payMonth),
       description: ps.description || "",
       days_edited: ps.daysEdited,
+      total_edited: ps.totalEdited,
       fixed_monthly: Math.round(ps.fixedMonthly * 100) / 100,
       working_days: ps.workingDays, ferie: ps.ferie, unpaid_ferie: ps.unpaidFerie,
       permessi: ps.permessi, malattia: ps.malattia,
@@ -2057,7 +2074,7 @@ function invoiceLines(v) {
   const lines = [{
     desc: "Compenso giorni lavorati",
     days: Number(v.worked_days) || 0,
-    rate,
+    rate: d.base != null && Number(v.worked_days) ? Number(d.base) / Number(v.worked_days) : rate,
     amount: d.base != null ? Number(d.base) : (Number(v.worked_days) || 0) * rate
   }];
   (d.items || []).forEach((i) => lines.push({
