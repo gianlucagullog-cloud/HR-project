@@ -153,6 +153,7 @@ const refs = {
   leaveOther: el("leaveOther"),
   payMonth: el("payMonth"),
   payPrint: el("payPrint"),
+  payGenerate: el("payGenerate"),
   payBody: el("payBody"),
   payTotal: el("payTotal"),
   payDaysDetail: el("payDaysDetail"),
@@ -1214,6 +1215,7 @@ function bindEmployeeSheetEvents() {
   refs.payItemKind.addEventListener("change", syncPayItemForm);
   refs.payItemForm.addEventListener("submit", addPayItem);
   refs.payPrint.addEventListener("click", printPayslip);
+  refs.payGenerate.addEventListener("click", generateInvoice);
 
   refs.leaveResetUsed.addEventListener("click", resetUsedLeave);
   refs.leaveUndoReset.addEventListener("click", undoLeaveReset);
@@ -2181,6 +2183,35 @@ function invoiceMailBody({ employee, pay, v, monthLabel }) {
     "Cordiali saluti",
     state.profile?.fullName || ""
   ].join("\r\n");
+}
+
+// Scarica il PDF della fattura del mese selezionato (importo validato se presente, altrimenti simulazione)
+async function generateInvoice() {
+  const ctx = state.lastPayslip;
+  if (!ctx) return;
+  const { employee, pay, ps } = ctx;
+  const v = getValidation(state.payMonth) || {
+    amount: ps.total,
+    daily_rate: Math.round(ps.rate * 100) / 100,
+    worked_days: ps.worked,
+    details: {
+      pay_type: ps.payType,
+      base: Math.round(ps.base * 100) / 100,
+      items: ps.items.map((i) => ({ kind: i.kind, description: i.description, days: i.days, amount: i.amount }))
+    }
+  };
+  if (!(Number(v.amount) > 0)) return setStatus(refs.payStatus, "Importo del mese pari a zero: niente da fatturare.", "error");
+
+  setStatus(refs.payStatus, "Genero la fattura…");
+  try {
+    const doc = await buildInvoicePdf({ employee, pay, v, ym: state.payMonth });
+    const surname = (pay.billingName || employee.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
+    const fileName = `${invoiceNumber(state.payMonth)}_${surname}.pdf`;
+    doc.save(fileName);
+    setStatus(refs.payStatus, `Fattura ${fileName} scaricata (${fmtEur(v.amount)}).`, "success");
+  } catch (err) {
+    setStatus(refs.payStatus, `Fattura non generata: ${err.message}`, "error");
+  }
 }
 
 // Email .eml con il PDF già allegato: aperta in Outlook diventa un nuovo messaggio pronto da inviare
