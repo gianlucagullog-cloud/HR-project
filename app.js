@@ -57,6 +57,9 @@ const refs = {
   // app
   appContent: el("appContent"),
   logoutButton: el("logoutButton"),
+  roleSwitch: el("roleSwitch"),
+  previewBanner: el("previewBanner"),
+  previewExit: el("previewExit"),
   userChip: el("userChip"),
   navButtons: [...document.querySelectorAll(".nav-item")],
   panels: [...document.querySelectorAll(".view-panel")],
@@ -258,6 +261,10 @@ function bindEvents() {
   refs.logoutButton.addEventListener("click", handleLogout);
   refs.pendingLogout.addEventListener("click", handleLogout);
 
+  // Admin: anteprima "vista dipendente" e ritorno
+  refs.roleSwitch.addEventListener("click", () => setEmployeePreview(!state.previewEmployee));
+  refs.previewExit.addEventListener("click", () => setEmployeePreview(false));
+
   // Main nav + inline link-buttons with data-view-target
   document.querySelectorAll("[data-view-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -419,6 +426,7 @@ async function handleSession(session) {
 
   // active
   showApp();
+  state.previewEmployee = false;
   state.activeView = state.profile.role === "admin" ? "dashboard" : "request";
   syncRoleUI();
   syncViewUI();
@@ -436,6 +444,9 @@ function resetToAuthScreen() {
   refs.logoutButton.classList.add("hidden");
   refs.userChip.textContent = "Non connesso";
   refs.body.classList.remove("role-admin", "role-employee");
+  state.previewEmployee = false;
+  refs.roleSwitch.classList.add("hidden");
+  refs.previewBanner.classList.add("hidden");
   switchAuthTab("login");
 }
 
@@ -610,10 +621,28 @@ function applyPeriodCustomClass() {
 // ROLE / VIEW UI
 // =====================================================================
 
+// Ruolo usato per l'interfaccia: un admin può vedere il portale "come dipendente".
+// I permessi reali (dati caricati, funzioni admin) restano quelli del suo profilo.
+function uiRole() {
+  if (!state.profile) return null;
+  return state.profile.role === "admin" && state.previewEmployee ? "employee" : state.profile.role;
+}
+
+function setEmployeePreview(on) {
+  if (state.profile?.role !== "admin") return;
+  state.previewEmployee = Boolean(on);
+  state.activeView = state.previewEmployee ? "request" : "dashboard";
+  syncRoleUI();
+  syncViewUI();
+  populateEmployeeOptions();
+  render();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 function populateEmployeeOptions() {
   if (!state.profile) return;
 
-  const visible = state.profile.role === "admin"
+  const visible = uiRole() === "admin"
     ? state.employees
     : state.employees.filter((e) => e.id === state.profile.id);
 
@@ -626,7 +655,7 @@ function populateEmployeeOptions() {
     refs.filterEmployee.innerHTML = `<option value="all">Tutti</option>${options}`;
   }
 
-  if (state.profile.role !== "admin") {
+  if (uiRole() !== "admin") {
     refs.employeeSelect.value = state.profile.id;
     refs.employeeSelect.disabled = true;
   } else {
@@ -635,7 +664,11 @@ function populateEmployeeOptions() {
 }
 
 function syncRoleUI() {
-  const role = state.profile?.role;
+  const role = uiRole();
+  const isRealAdmin = state.profile?.role === "admin";
+  refs.roleSwitch.classList.toggle("hidden", !isRealAdmin);
+  refs.roleSwitch.textContent = state.previewEmployee ? "Torna ad admin" : "Vista dipendente";
+  refs.previewBanner.classList.toggle("hidden", !(isRealAdmin && state.previewEmployee));
   const allowed = role === "admin"
     ? ["dashboard", "approvals", "history", "team", "employees", "users"]
     : ["request", "history"];
@@ -880,7 +913,7 @@ function renderHistory() {
   const startFilter    = refs.historyStart.value;
   const endFilter      = refs.historyEnd.value;
 
-  const isEmployee = state.profile?.role !== "admin";
+  const isEmployee = uiRole() !== "admin";
 
   state.historyRows = state.requests
     .filter((r) => isEmployee ? r.employeeId === state.profile.id : true)
