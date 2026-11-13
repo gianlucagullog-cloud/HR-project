@@ -343,6 +343,10 @@ function bindEvents() {
   refs.periodPreset.addEventListener("change", handlePresetChange);
   refs.periodStart.addEventListener("input", handleCustomPeriodChange);
   refs.periodEnd.addEventListener("input", handleCustomPeriodChange);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || state.periodPreset === "custom") return;
+    if (state.periodEnd !== toISODate(new Date())) handlePresetChange();
+  });
 }
 
 function switchAuthTab(which) {
@@ -1228,6 +1232,16 @@ async function submitRequest() {
     return;
   }
 
+  const overlap = state.requests.find((r) =>
+    r.employeeId === employeeId &&
+    (r.status === "Pending" || r.status === "Approved") &&
+    r.startDate <= endDate && r.endDate >= startDate);
+  if (overlap) {
+    setStatus(refs.requestStatus,
+      `Esiste già una richiesta (${overlap.type}, ${overlap.status === "Pending" ? "in attesa" : "approvata"}) dal ${formatDate(overlap.startDate)} al ${formatDate(overlap.endDate)} che si sovrappone a queste date.`, "error");
+    return;
+  }
+
   setStatus(refs.requestStatus, "Invio richiesta…");
 
   const { error } = await supabaseClient.from("leave_requests").insert({
@@ -1331,15 +1345,16 @@ function renderHistory() {
 // =====================================================================
 
 function renderTeam() {
-  const approvedInPeriod = getRequestsInPeriod().filter((r) => r.status === "Approved");
+  // Stesso calcolo della scheda dipendente: solo Ferie approvate, quota
+  // pro-rata dall'inizio contratto, al netto degli azzeramenti. Anno = fine periodo.
+  const year = Number((state.periodEnd || toISODate(new Date())).slice(0, 4));
 
   const rows = state.employees.map((employee) => {
-    const used = approvedInPeriod
-      .filter((r) => r.employeeId === employee.id)
-      .reduce((s, r) => s + r.workingDays, 0);
-    const quota = employee.annualQuota || DEFAULT_QUOTA;
-    const ratio = Math.min(100, Math.round((used / quota) * 100) || 0);
-    const remaining = Math.max(quota - used, 0);
+    const lb = computeLeaveBalance(employee, getPay(employee.id), year);
+    const used = fmtDays(lb.used);
+    const quota = fmtDays(lb.total);
+    const ratio = lb.total > 0 ? Math.min(100, Math.round((lb.used / lb.total) * 100)) : 0;
+    const remaining = fmtDays(lb.remaining);
     return { employee, used, remaining, ratio, quota };
   });
 
@@ -2155,7 +2170,8 @@ function renderDirectory() {
         <td>${escapeHtml(pay.jobTitle || "-")}<span class="dir-sub">${escapeHtml(pay.department || "Nessun dipartimento")}</span></td>
         <td class="num">${comp}</td>
         <td class="num ${lb.remaining < 0 ? "negative-text" : ""}">${fmtDays(lb.remaining)} gg<span class="dir-sub">su ${fmtDays(lb.total)}</span></td>
-        <td class="num">${fmtEur(r.amount)}<span class="dir-sub">${v ? "validato" : "simulato"}</span></td>
+        <td class="num">${fmtEur(r.amount)}<span class="dir-sub">${v ? "validato" : (r.ps.totalEdited || r.ps.daysEdited)
+          ? `modificato a mano · calcolato ${fmtEur(r.ps.computedTotal)}` : "simulato"}</span></td>
         <td>${status}</td>
       </tr>`;
   }).join("") : `<tr><td colspan="6" class="empty-state">Nessun dipendente corrisponde ai filtri.</td></tr>`;
