@@ -28,6 +28,9 @@ const state = {
   payItems: [],           // voci del mese selezionato
   payItemsAll: [],        // tutte le voci del dipendente selezionato
   validations: [],        // mesi validati del dipendente selezionato
+  rateHistory: {},        // employee_id -> [{valid_from, pay_type, daily_rate, annual_salary}]
+  billing: {},            // anno -> { validations, items } per tutti i dipendenti (admin)
+  costYear: 0,
   leaveAdj: {},           // "employeeId|anno" -> giorni godute azzerati
   myValidations: [],      // fatture validate del dipendente loggato ("La mia scheda")
   myItems: [],            // voci extra (rimborsi ecc.) del dipendente loggato
@@ -94,6 +97,7 @@ const refs = {
   requestNotes: el("requestNotes"),
   requestStatus: el("requestStatus"),
   workingDaysInfo: el("workingDaysInfo"),
+  halfDay: el("halfDay"),
   quotaChip: el("quotaChip"),
 
   // approvals
@@ -311,6 +315,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.viewTarget;
       if (state.activeView === "employees") openDirectory();
+      if (state.activeView === "costs") renderCosts(true);
       if (state.activeView === "mycard") loadMyCard();
       syncViewUI();
     });
@@ -349,6 +354,9 @@ function bindEvents() {
   document.getElementById("calNext")?.addEventListener("click", () => shiftCalendar(1));
   document.getElementById("calToday")?.addEventListener("click", () => { state.calYm = ""; renderCalendar(); });
   document.getElementById("calDept")?.addEventListener("change", renderCalendar);
+  document.getElementById("calIcs")?.addEventListener("click", exportIcs);
+  document.getElementById("costYear")?.addEventListener("change", () => renderCosts(false));
+  refs.halfDay?.addEventListener("change", updateWorkingDaysPreview);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible" || state.periodPreset === "custom") return;
     if (state.periodEnd !== toISODate(new Date())) handlePresetChange();
@@ -588,7 +596,9 @@ async function refreshData() {
     }
   }
 
-  if (state.profile.role === "admin") await loadDrafts();
+  if (state.profile.role === "admin") {
+    await Promise.all([loadDrafts(), loadRateHistory(), loadBillingYear(new Date().getFullYear()), loadPrevMonthBilling()]);
+  }
 
   populateEmployeeOptions();
   render();
@@ -606,7 +616,7 @@ async function fetchProfiles() {
 async function fetchRequests() {
   return supabaseClient
     .from("leave_requests")
-    .select("id, employee_id, type, start_date, end_date, working_days, status, notes, created_at")
+    .select("id, employee_id, type, start_date, end_date, working_days, half_day, status, notes, created_at")
     .order("created_at", { ascending: false });
 }
 
@@ -617,7 +627,8 @@ function normalizeRequest(r) {
     type: r.type,
     startDate: r.start_date,
     endDate: r.end_date,
-    workingDays: r.working_days,
+    workingDays: Number(r.working_days) || 0,
+    halfDay: Boolean(r.half_day),
     status: r.status,
     notes: r.notes || "",
     createdAt: r.created_at
@@ -732,6 +743,7 @@ async function loadMyCard() {
       state.payData = { ...state.payData, [me]: { employee_id: me, ...card.data[0] } };
     }
     if (!adj.error) adj.data.forEach((r) => { state.leaveAdj[`${r.employee_id}|${r.year}`] = Number(r.used_offset) || 0; });
+    await loadRateHistory(me);
   }
 
   const [val, items] = await Promise.all([
@@ -763,7 +775,7 @@ function mySimData() {
     worked_days: ps.worked,
     details: {
       pay_type: ps.payType,
-      invoice_number: ps.invoiceNo || invoiceNumber(ym),
+      invoice_number: ps.invoiceNo || nextInvoiceNo(ym, state.myValidations),
       description: ps.description || "",
       base: Math.round(ps.base * 100) / 100,
       items: ps.items.map((i) => ({ kind: i.kind, description: i.description, days: i.days, amount: i.amount }))
@@ -787,7 +799,7 @@ function renderMySim() {
   keep(desc, validated ? (d.description || "") : ps.description);
   keep(days, validated ? (d.days_edited ? String(v.worked_days) : "") : (ps.daysEdited ? String(ps.worked) : ""));
   keep(total, validated ? (d.total_edited ? String(v.amount) : "") : (ps.totalEdited ? String(ps.total) : ""));
-  num.placeholder = invoiceNumber(ym);
+  num.placeholder = nextInvoiceNo(ym, state.myValidations);
   desc.placeholder = defaultInvoiceDescription(ym, ps.payType !== "fixed");
   days.placeholder = fmtDays(ps.computedWorked);
   total.placeholder = ps.computedTotal.toFixed(2);
@@ -1065,7 +1077,7 @@ function syncRoleUI() {
     refs.previewText.innerHTML = `<strong>Vista dipendente</strong> · stai vedendo il portale come lo vede ${self ? "un dipendente, con i tuoi dati" : `<strong>${escapeHtml(viewerProfile().fullName)}</strong>`}. Le richieste inviate sono reali${self ? "" : " e a suo nome"}.`;
   }
   const allowed = role === "admin"
-    ? ["dashboard", "approvals", "history", "team", "calendar", "employees", "users"]
+    ? ["dashboard", "approvals", "history", "team", "calendar", "costs", "employees", "users"]
     : ["request", "mycard", "history"];
 
   if (role && !allowed.includes(state.activeView)) {
@@ -1091,6 +1103,7 @@ function syncViewUI() {
 
 function render() {
   renderMetrics();
+  renderAlerts();
   renderPendingLists();
   renderHistory();
   renderTeam();
@@ -1146,7 +1159,7 @@ function renderMetrics() {
   const metrics = [
     { label: "Richieste totali",     value: scoped.length,       detail: "Nel periodo selezionato" },
     { label: "Pendenti",             value: pending.length,       detail: "In attesa di decisione" },
-    { label: "Giorni approvati",     value: totalDays,            detail: "Solo giorni lavorativi" },
+    { label: "Giorni approvati",     value: fmtDays(totalDays),            detail: "Solo giorni lavorativi" },
     { label: "Dipendenti coinvolti", value: employeesOnLeave,     detail: "Con ferie approvate" },
     { label: "Rifiutate",            value: rejected.length,      detail: "Richieste respinte" }
   ];
@@ -1159,6 +1172,67 @@ function renderMetrics() {
     card.querySelector(".metric-detail").textContent = m.detail;
     refs.metricsGrid.appendChild(card);
   });
+}
+
+function renderAlerts() {
+  const box = document.getElementById("dashAlerts");
+  if (!box || state.profile?.role !== "admin") return;
+  const today = new Date();
+  const blocks = [];
+
+  // 5. Chiusura del mese precedente (primi 10 giorni del mese)
+  const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1, 12);
+  const prevYm = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+  const pv = state.prevMonth?.ym === prevYm ? state.prevMonth.validations : null;
+  if (today.getDate() <= 10 && pv) {
+    const active = state.employees.filter((e) => !getPay(e.id).contractStart || getPay(e.id).contractStart <= monthBounds(prevYm).end);
+    const validated = active.filter((e) => pv.some((v) => v.employee_id === e.id));
+    const sent = active.filter((e) => pv.some((v) => v.employee_id === e.id && v.sent_at));
+    const missing = active.filter((e) => { const p = getPay(e.id); return !p.iban || !(p.payType === "fixed" ? p.annualSalary : p.dailyRate); });
+    const done = validated.length === active.length && sent.length === active.length;
+    const check = (ok, text) => `<li class="${ok ? "ok" : ""}">${ok ? "✓" : "○"} ${text}</li>`;
+    blocks.push(`<article class="alert-card ${done ? "is-done" : ""}">
+      <header><strong>Chiusura ${monthName(prevYm).toLowerCase()}</strong>
+        <button class="link-button" data-view-target="employees" type="button">Apri Dipendenti →</button></header>
+      <ul class="checklist">
+        ${check(validated.length === active.length, `Fatture validate: ${validated.length}/${active.length}`)}
+        ${check(sent.length === active.length, `Fatture inviate: ${sent.length}/${active.length}`)}
+        ${check(!missing.length, missing.length ? `Dati mancanti: ${missing.map((e) => escapeHtml(e.fullName)).join(", ")}` : "Schede complete")}
+      </ul></article>`);
+  }
+
+  // 1. Ferie in scadenza (da ottobre): nessun riporto all'anno successivo
+  if (today.getMonth() >= 9) {
+    const year = today.getFullYear();
+    const left = countWorkingDays(toISODate(today), `${year}-12-31`);
+    const rows = state.employees
+      .map((e) => ({ e, lb: computeLeaveBalance(e, getPay(e.id), year) }))
+      .filter((x) => x.lb.remaining - x.lb.pending >= 5)
+      .sort((a, b) => b.lb.remaining - a.lb.remaining);
+    if (rows.length) {
+      blocks.push(`<article class="alert-card warn">
+        <header><strong>Ferie in scadenza il 31/12</strong><span class="muted">restano ${left} giorni lavorativi nell'anno</span></header>
+        <ul class="checklist">${rows.map(({ e, lb }) => {
+          const free = lb.remaining - lb.pending;
+          return `<li class="${free > left ? "bad" : ""}">${escapeHtml(e.fullName)}: <strong>${fmtDays(free)} gg</strong> da pianificare${lb.pending ? ` (+${fmtDays(lb.pending)} in attesa)` : ""}${free > left ? " · non bastano i giorni rimasti" : ""}</li>`;
+        }).join("")}</ul></article>`);
+    }
+  }
+
+  box.innerHTML = blocks.join("");
+  box.classList.toggle("hidden", !blocks.length);
+  box.querySelectorAll("[data-view-target]").forEach((b) => b.addEventListener("click", () => {
+    state.activeView = b.dataset.viewTarget; syncViewUI(); if (state.activeView === "employees") openDirectory();
+  }));
+}
+
+async function loadPrevMonthBilling() {
+  const t = new Date();
+  const prev = new Date(t.getFullYear(), t.getMonth() - 1, 1, 12);
+  const ym = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+  const { data, error } = await supabaseClient.from("payslip_validations")
+    .select("employee_id, month, amount, sent_at").eq("month", `${ym}-01`);
+  state.prevMonth = { ym, validations: error ? [] : data };
 }
 
 function renderPendingLists() {
@@ -1191,7 +1265,8 @@ function requestCardMarkup(request, withActions) {
         <div>
           <h4>${escapeHtml(name)}</h4>
           <p class="meta-line">${escapeHtml(request.type)} · ${formatDate(request.startDate)} → ${formatDate(request.endDate)}</p>
-          <p class="meta-line">${request.workingDays} giorni lavorativi${sub ? ` · ${escapeHtml(sub)}` : ""}</p>
+          <p class="meta-line">${request.halfDay ? "Mezza giornata" : `${fmtDays(request.workingDays)} giorni lavorativi`}${sub ? ` · ${escapeHtml(sub)}` : ""}</p>
+          ${withActions ? conflictNote(request) : ""}
           ${request.notes ? `<p class="meta-line">📝 ${escapeHtml(request.notes)}</p>` : ""}
         </div>
         <span class="badge ${request.status}">${request.status}</span>
@@ -1205,11 +1280,35 @@ function requestCardMarkup(request, withActions) {
   `;
 }
 
+// Colleghi dello stesso reparto assenti (approvati o in attesa) nelle stesse date
+function requestConflicts(request) {
+  const dept = getPay(request.employeeId).department;
+  if (!dept) return [];
+  return state.requests.filter((r) =>
+    r.id !== request.id && r.employeeId !== request.employeeId &&
+    (r.status === "Approved" || r.status === "Pending") &&
+    r.startDate <= request.endDate && r.endDate >= request.startDate &&
+    getPay(r.employeeId).department === dept);
+}
+
+function conflictNote(request) {
+  const c = requestConflicts(request);
+  if (!c.length) return "";
+  const dept = getPay(request.employeeId).department;
+  return `<p class="conflict-note">⚠ Nello stesso reparto (${escapeHtml(dept)}) è già assente: ${c.map((r) =>
+    `${escapeHtml(getEmployeeById(r.employeeId)?.fullName || "?")} (${formatDate(r.startDate)} → ${formatDate(r.endDate)}${r.status === "Pending" ? ", in attesa" : ""})`).join("; ")}</p>`;
+}
+
 function emptyStateMarkup(text) {
   return `<p class="empty-state">${escapeHtml(text)}</p>`;
 }
 
 async function updateRequestStatus(id, status) {
+  const req = state.requests.find((r) => r.id === id);
+  if (status === "Approved" && req) {
+    const c = requestConflicts(req);
+    if (c.length && !confirm(`Attenzione: nello stesso reparto è già assente ${c.map((r) => getEmployeeById(r.employeeId)?.fullName).join(", ")} in quelle date.\n\nApprovare comunque?`)) return;
+  }
   const { error } = await supabaseClient
     .from("leave_requests")
     .update({ status })
@@ -1231,7 +1330,13 @@ async function submitRequest() {
   const employeeId = refs.employeeSelect.value || viewerId();
   const startDate  = refs.startDate.value;
   const endDate    = refs.endDate.value;
-  const workingDays = countWorkingDays(startDate, endDate);
+  const halfDay = Boolean(refs.halfDay?.checked) && startDate === endDate;
+  const workingDays = countWorkingDays(startDate, endDate) * (halfDay ? 0.5 : 1);
+
+  if (refs.halfDay?.checked && startDate !== endDate) {
+    setStatus(refs.requestStatus, "La mezza giornata vale per un solo giorno: usa la stessa data di inizio e fine.", "error");
+    return;
+  }
 
   if (!employeeId || !startDate || !endDate || workingDays <= 0) {
     setStatus(refs.requestStatus,
@@ -1242,7 +1347,8 @@ async function submitRequest() {
   const overlap = state.requests.find((r) =>
     r.employeeId === employeeId &&
     (r.status === "Pending" || r.status === "Approved") &&
-    r.startDate <= endDate && r.endDate >= startDate);
+    r.startDate <= endDate && r.endDate >= startDate &&
+    !(halfDay && r.halfDay)); // due mezze giornate nello stesso giorno sono ammesse
   if (overlap) {
     setStatus(refs.requestStatus,
       `Esiste già una richiesta (${overlap.type}, ${overlap.status === "Pending" ? "in attesa" : "approvata"}) dal ${formatDate(overlap.startDate)} al ${formatDate(overlap.endDate)} che si sovrappone a queste date.`, "error");
@@ -1257,6 +1363,7 @@ async function submitRequest() {
     start_date: startDate,
     end_date: endDate,
     working_days: workingDays,
+    ...(halfDay ? { half_day: true } : {}),
     status: "Pending",
     notes: refs.requestNotes.value.trim()
   });
@@ -1281,9 +1388,14 @@ function updateWorkingDaysPreview() {
     refs.workingDaysInfo.textContent = "Seleziona un intervallo per calcolare i giorni lavorativi.";
     return;
   }
-  const d = countWorkingDays(s, e);
+  const half = Boolean(refs.halfDay?.checked);
+  if (half && s !== e) {
+    refs.workingDaysInfo.textContent = "La mezza giornata vale per un solo giorno: usa la stessa data di inizio e fine.";
+    return;
+  }
+  const d = countWorkingDays(s, e) * (half ? 0.5 : 1);
   refs.workingDaysInfo.textContent = d > 0
-    ? `${d} giorni lavorativi calcolati automaticamente.`
+    ? `${fmtDays(d)} ${d === 1 ? "giorno lavorativo" : "giorni lavorativi"} calcolat${d === 1 ? "o" : "i"} automaticamente.`
     : "L'intervallo non contiene giorni lavorativi validi.";
 }
 
@@ -1400,6 +1512,28 @@ function shiftCalendar(delta) {
   renderCalendar();
 }
 
+// File .ics con le assenze approvate (da quest'anno in poi): si importa in Outlook
+function exportIcs() {
+  const dept = document.getElementById("calDept")?.value || "";
+  const from = `${new Date().getFullYear()}-01-01`;
+  const reqs = state.requests.filter((r) => r.status === "Approved" && r.endDate >= from &&
+    (!dept || (getPay(r.employeeId).department || "Senza reparto") === dept));
+  const d = (iso) => iso.replace(/-/g, "");
+  const next = (iso) => { const x = new Date(`${iso}T12:00:00`); x.setDate(x.getDate() + 1); return toISODate(x); };
+  const esc = (t) => String(t).replace(/[\\;,]/g, (m) => "\\" + m).replace(/\n/g, "\\n");
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+  const events = reqs.map((r) => {
+    const name = getEmployeeById(r.employeeId)?.fullName || "Dipendente";
+    return ["BEGIN:VEVENT", `UID:${r.id}@hrmarathon`, `DTSTAMP:${stamp}`,
+      `DTSTART;VALUE=DATE:${d(r.startDate)}`, `DTEND;VALUE=DATE:${d(next(r.endDate))}`,
+      `SUMMARY:${esc(`${name} – ${r.type}${r.halfDay ? " (mezza giornata)" : ""}`)}`,
+      "TRANSP:TRANSPARENT", "END:VEVENT"].join("\r\n");
+  });
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Marathonbet//Leave Control//IT",
+    "CALSCALE:GREGORIAN", "X-WR-CALNAME:Assenze team Marathonbet", ...events, "END:VCALENDAR"].join("\r\n");
+  downloadBlob(new Blob([ics], { type: "text/calendar;charset=utf-8" }), `assenze-team${dept ? "-" + dept.replace(/\W+/g, "") : ""}.ics`);
+}
+
 function renderCalendar() {
   const grid = document.getElementById("calGrid");
   if (!grid || state.profile?.role !== "admin") return;
@@ -1455,8 +1589,8 @@ function renderCalendar() {
       const r = absenceOn(e.id, d.iso);
       if (!r || !d.work) return `<td class="${d.work ? "" : "cal-off"}"></td>`;
       const pend = r.status === "Pending";
-      return `<td class="${LEAVE_CLASS[r.type] || ""} ${pend ? "cal-pending" : ""}"
-                  title="${escapeHtml(`${e.fullName} · ${r.type}${pend ? " (in attesa)" : ""} · ${formatDate(r.startDate)} – ${formatDate(r.endDate)}`)}"></td>`;
+      return `<td class="${LEAVE_CLASS[r.type] || ""} ${pend ? "cal-pending" : ""} ${r.halfDay ? "cal-half" : ""}"
+                  title="${escapeHtml(`${e.fullName} · ${r.type}${r.halfDay ? " (mezza giornata)" : ""}${pend ? " (in attesa)" : ""} · ${formatDate(r.startDate)} – ${formatDate(r.endDate)}`)}"></td>`;
     }).join("");
     return `${sep}<tr><td class="cal-name">${escapeHtml(e.fullName)}</td>${cells}</tr>`;
   }).join("");
@@ -1473,6 +1607,95 @@ function renderCalendar() {
     ? `<strong>Sovrapposizioni nello stesso reparto</strong><ul>${clashes.map((c) =>
         `<li>${formatDate(c.iso)} · ${escapeHtml(c.dept)}: ${c.names.map(escapeHtml).join(", ")}</li>`).join("")}</ul>`
     : `<span class="muted">Nessuna sovrapposizione nello stesso reparto questo mese.</span>`;
+}
+
+// =====================================================================
+// COSTI: fatturato validato + stima dei mesi non validati
+// =====================================================================
+
+async function loadBillingYear(year) {
+  const [v, i] = await Promise.all([
+    supabaseClient.from("payslip_validations").select("employee_id, month, amount, sent_at")
+      .gte("month", `${year}-01-01`).lte("month", `${year}-12-01`),
+    supabaseClient.from("payslip_items").select("employee_id, month, kind, description, days, amount")
+      .gte("month", `${year}-01-01`).lte("month", `${year}-12-01`)
+  ]);
+  state.billing[year] = { validations: v.error ? [] : v.data, items: i.error ? [] : i.data };
+}
+
+function costMatrix(year) {
+  const b = state.billing[year] || { validations: [], items: [] };
+  const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+  const cells = []; // {emp, dept, ym, amount, validated}
+  state.employees.forEach((e) => {
+    const pay = getPay(e.id);
+    const dept = pay.department || "Senza reparto";
+    months.forEach((ym) => {
+      const v = b.validations.find((x) => x.employee_id === e.id && x.month.slice(0, 7) === ym);
+      let amount;
+      if (v) amount = Number(v.amount) || 0;
+      else {
+        const saved = state.payItemsAll;
+        state.payItemsAll = b.items.filter((i) => i.employee_id === e.id);
+        amount = computePayslip(e, pay, ym).total;
+        state.payItemsAll = saved;
+      }
+      cells.push({ emp: e, dept, ym, amount, validated: Boolean(v) });
+    });
+  });
+  return { months, cells };
+}
+
+async function renderCosts(reload) {
+  const box = document.getElementById("costTable");
+  if (!box || state.profile?.role !== "admin") return;
+  const sel = document.getElementById("costYear");
+  const thisYear = new Date().getFullYear();
+  if (!sel.options.length) {
+    sel.innerHTML = [thisYear - 1, thisYear, thisYear + 1].map((y) => `<option value="${y}" ${y === thisYear ? "selected" : ""}>${y}</option>`).join("");
+  }
+  const year = Number(sel.value) || thisYear;
+  if (reload || !state.billing[year]) { box.innerHTML = `<p class="muted">Caricamento…</p>`; await loadBillingYear(year); }
+
+  const { months, cells } = costMatrix(year);
+  const byDept = {};
+  cells.forEach((c) => { ((byDept[c.dept] ||= {})[c.ym] ||= 0); byDept[c.dept][c.ym] += c.amount; });
+  const depts = Object.keys(byDept).sort((a, b) => a.localeCompare(b, "it"));
+  const colTotal = (ym) => cells.filter((c) => c.ym === ym).reduce((s, c) => s + c.amount, 0);
+  const allValidated = (ym) => cells.filter((c) => c.ym === ym).every((c) => c.validated);
+  const sum = (arr) => arr.reduce((s, c) => s + c.amount, 0);
+  const validatedTot = sum(cells.filter((c) => c.validated));
+  const estTot = sum(cells.filter((c) => !c.validated));
+  const short = (ym) => new Intl.DateTimeFormat("it-IT", { month: "short" }).format(new Date(`${ym}-01T12:00:00`));
+  const k = (v) => v ? fmtEur(Math.round(v)).replace(/,00/, "") : "–";
+
+  document.getElementById("costMetrics").innerHTML = [
+    ["Totale anno", fmtEur(validatedTot + estTot), "validato + stimato"],
+    ["Già validato", fmtEur(validatedTot), `${cells.filter((c) => c.validated).length} fatture`],
+    ["Stimato", fmtEur(estTot), "mesi non ancora validati"],
+    ["Media mensile", fmtEur((validatedTot + estTot) / 12), "sull'anno intero"]
+  ].map(([l, v, d]) => `<article class="metric-card"><span class="metric-label">${l}</span><strong class="metric-value">${v}</strong><span class="metric-detail">${d}</span></article>`).join("");
+
+  const empRows = state.employees.slice().sort((a, b) => a.fullName.localeCompare(b.fullName, "it")).map((e) => {
+    const mine = cells.filter((c) => c.emp.id === e.id);
+    return `<tr><td>${escapeHtml(e.fullName)}<span class="dir-sub">${escapeHtml(mine[0]?.dept || "")}</span></td>
+      <td class="num">${fmtEur(sum(mine.filter((c) => c.validated)))}</td><td class="num">${fmtEur(sum(mine.filter((c) => !c.validated)))}</td>
+      <td class="num"><strong>${fmtEur(sum(mine))}</strong></td></tr>`;
+  }).join("");
+
+  box.innerHTML = `
+    <div class="cal-scroll"><table class="cost-table">
+      <thead><tr><th>Reparto</th>${months.map((ym) => `<th class="num ${allValidated(ym) ? "" : "is-est"}">${short(ym)}</th>`).join("")}<th class="num">Totale</th></tr></thead>
+      <tbody>${depts.map((d) => `<tr><td>${escapeHtml(d)}</td>${months.map((ym) => `<td class="num">${k(byDept[d][ym])}</td>`).join("")}
+        <td class="num"><strong>${k(months.reduce((s, ym) => s + (byDept[d][ym] || 0), 0))}</strong></td></tr>`).join("")}</tbody>
+      <tfoot><tr><td>Totale</td>${months.map((ym) => `<td class="num ${allValidated(ym) ? "" : "is-est"}">${k(colTotal(ym))}</td>`).join("")}
+        <td class="num">${k(validatedTot + estTot)}</td></tr></tfoot>
+    </table></div>
+    <p class="muted cost-note">In corsivo i mesi con almeno una fattura non ancora validata: l'importo è stimato con giorni lavorativi, festività, ferie approvate e compenso in vigore nel mese.</p>
+    <h3 class="cost-sub">Per dipendente</h3>
+    <div class="cal-scroll"><table class="cost-table">
+      <thead><tr><th>Dipendente</th><th class="num">Validato</th><th class="num">Stimato</th><th class="num">Totale ${year}</th></tr></thead>
+      <tbody>${empRows}</tbody></table></div>`;
 }
 
 // =====================================================================
@@ -1932,7 +2155,8 @@ function monthBounds(ym) {
 function clippedWorkingDays(req, from, to) {
   const s = req.startDate > from ? req.startDate : from;
   const e = req.endDate < to ? req.endDate : to;
-  return e < s ? 0 : countWorkingDays(s, e);
+  const days = e < s ? 0 : countWorkingDays(s, e);
+  return req.halfDay ? Math.min(days, 1) * 0.5 : days;
 }
 
 function sumDays(employeeId, from, to, { type, status }) {
@@ -2063,7 +2287,36 @@ async function saveDraft(employeeId, ym) {
   }
 }
 
+// Tariffa in vigore nel mese: ultima voce dello storico con decorrenza <= inizio mese.
+// Senza storico (o prima della prima voce) vale la tariffa attuale della scheda.
+function payAt(employeeId, pay, ym) {
+  const hist = state.rateHistory[employeeId];
+  if (!hist?.length) return pay;
+  const monthStart = `${ym}-01`;
+  const row = [...hist].reverse().find((h) => h.valid_from <= monthStart);
+  if (!row) return pay;
+  const fixed = row.pay_type === "fixed";
+  return {
+    ...pay,
+    payType: fixed ? "fixed" : "daily",
+    dailyRate: fixed ? (Number(row.annual_salary) || 0) / ANNUAL_PAID_DAYS : Number(row.daily_rate) || 0,
+    annualSalary: fixed ? Number(row.annual_salary) || 0 : annualFromRate(row.daily_rate)
+  };
+}
+
+async function loadRateHistory(employeeId) {
+  let q = supabaseClient.from("employee_rate_history")
+    .select("employee_id, valid_from, pay_type, daily_rate, annual_salary").order("valid_from", { ascending: true });
+  if (employeeId) q = q.eq("employee_id", employeeId);
+  const { data, error } = await q;
+  if (error) return; // tabella non ancora creata: si usa la tariffa attuale
+  const map = {};
+  data.forEach((r) => (map[r.employee_id] ||= []).push(r));
+  state.rateHistory = employeeId ? { ...state.rateHistory, [employeeId]: map[employeeId] || [] } : map;
+}
+
 function computePayslip(employee, pay, ym) {
+  pay = payAt(employee.id, pay, ym);
   const { year, start, end } = monthBounds(ym);
   const rate = effectiveRate(pay, year);
   const effStart = pay.contractStart && pay.contractStart > start ? pay.contractStart : start;
@@ -2244,6 +2497,18 @@ function directoryRow(employee, ym, dir) {
   return { employee, pay, lb, ps, v, missing, amount: v ? Number(v.amount) : ps.total };
 }
 
+// Scostamento oltre il 5% tra importo modificato a mano e calcolo
+const ANOMALY_THRESHOLD = 0.05;
+function anomalyOf(r) {
+  if (r.v || !r.ps.totalEdited || !r.ps.computedTotal) return 0;
+  const diff = (r.ps.total - r.ps.computedTotal) / r.ps.computedTotal;
+  return Math.abs(diff) > ANOMALY_THRESHOLD ? diff : 0;
+}
+function anomalyNote(r) {
+  const d = anomalyOf(r);
+  return d ? `<span class="dir-warn">Scostamento ${d > 0 ? "+" : ""}${(d * 100).toFixed(1).replace(".", ",")}% dal calcolo</span>` : "";
+}
+
 function renderDirectory() {
   if (!refs.dirBody || state.profile?.role !== "admin") return;
   const ym = state.dir?.ym || currentYm();
@@ -2306,7 +2571,7 @@ function renderDirectory() {
         <td class="num">${comp}</td>
         <td class="num ${lb.remaining < 0 ? "negative-text" : ""}">${fmtDays(lb.remaining)} gg<span class="dir-sub">su ${fmtDays(lb.total)}</span></td>
         <td class="num">${fmtEur(r.amount)}<span class="dir-sub">${v ? "validato" : (r.ps.totalEdited || r.ps.daysEdited)
-          ? `modificato a mano · calcolato ${fmtEur(r.ps.computedTotal)}` : "simulato"}</span></td>
+          ? `modificato a mano · calcolato ${fmtEur(r.ps.computedTotal)}` : "simulato"}</span>${anomalyNote(r)}</td>
         <td>${status}</td>
       </tr>`;
   }).join("") : `<tr><td colspan="6" class="empty-state">Nessun dipendente corrisponde ai filtri.</td></tr>`;
@@ -2520,7 +2785,7 @@ function renderInvoiceFields(ps, validation) {
   set(refs.payInvTotal, vals.total);
   refs.payInvTotal.placeholder = ps.computedTotal.toFixed(2);
   refs.payInvTotalHint.textContent = `Calcolato: ${fmtEur(ps.computedTotal)} (vuoto = automatico)`;
-  refs.payInvNumber.placeholder = invoiceNumber(state.payMonth);
+  refs.payInvNumber.placeholder = nextInvoiceNo(state.payMonth, state.validations);
   refs.payInvDesc.placeholder = defaultInvoiceDescription(state.payMonth, ps.payType !== "fixed");
   refs.payInvDays.placeholder = fmtDays(ps.computedWorked);
   refs.payInvDaysHint.textContent = `Calcolati: ${fmtDays(ps.computedWorked)} (vuoto = automatico)`;
@@ -2626,6 +2891,9 @@ async function validateMonth() {
   if (!ctx || getValidation(state.payMonth)) return;
   const { employee, ps } = ctx;
   const label = monthName(state.payMonth);
+  const invNo = ps.invoiceNo || nextInvoiceNo(state.payMonth, state.validations);
+  const dup = duplicateInvoiceNo(invNo, state.payMonth, state.validations);
+  if (dup) return setStatus(refs.payStatus, `Il numero fattura "${invNo}" è già usato per ${monthName(dup.month.slice(0, 7))}. Cambialo prima di validare.`, "error");
   if (!confirm(`Validare ${label} di ${employee.fullName} per ${fmtEur(ps.total)}?\n\nL'importo viene registrato nel fatturato e il mese non sarà più modificabile (puoi annullare la validazione).`)) return;
 
   const { error } = await supabaseClient.from("payslip_validations").insert({
@@ -2638,7 +2906,7 @@ async function validateMonth() {
     bonus_amount: Math.round(ps.bonus * 100) / 100,
     details: {
       pay_type: ps.payType,
-      invoice_number: ps.invoiceNo || invoiceNumber(state.payMonth),
+      invoice_number: ps.invoiceNo || nextInvoiceNo(state.payMonth, state.validations),
       description: ps.description || "",
       days_edited: ps.daysEdited,
       total_edited: ps.totalEdited,
@@ -2748,9 +3016,34 @@ async function saveEmployeeSheet(event) {
   };
   const quota = Number(refs.empQuota.value);
 
+  // Cambio tariffa: chiede da quale mese vale, così i mesi precedenti restano alla tariffa vecchia
+  const old = state.payData[employee.id];
+  const rateChanged = old && (Number(old.daily_rate) || 0) > 0 &&
+    ((old.pay_type || "daily") !== row.pay_type ||
+     (row.pay_type === "fixed" ? Number(old.annual_salary) !== row.annual_salary : Number(old.daily_rate) !== row.daily_rate));
+  let validFrom = null;
+  if (rateChanged) {
+    const ans = prompt("Il compenso è cambiato. Da quale mese vale il nuovo importo? (AAAA-MM)\n\nI mesi precedenti restano calcolati con il compenso vecchio.", currentYm());
+    if (ans === null) return;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ans.trim())) return setStatus(refs.empStatus, "Mese non valido: usa il formato AAAA-MM, es. 2026-12.", "error");
+    validFrom = `${ans.trim()}-01`;
+  }
+
   setStatus(refs.empStatus, "Salvataggio…");
   const { error } = await supabaseClient.from("employee_pay").upsert(row);
   if (error) return setStatus(refs.empStatus, payTableError(error), "error");
+
+  if (validFrom) {
+    const hist = state.rateHistory[employee.id] || [];
+    const rows = [];
+    if (!hist.length) rows.push({ // prima modifica: salva anche il compenso precedente
+      employee_id: employee.id, valid_from: old.contract_start || "2000-01-01", pay_type: old.pay_type || "daily",
+      daily_rate: Number(old.daily_rate) || 0, annual_salary: Number(old.annual_salary) || 0 });
+    rows.push({ employee_id: employee.id, valid_from: validFrom, pay_type: row.pay_type,
+      daily_rate: row.daily_rate, annual_salary: row.annual_salary });
+    const h = await supabaseClient.from("employee_rate_history").upsert(rows, { onConflict: "employee_id,valid_from" });
+    if (h.error) return setStatus(refs.empStatus, `Scheda salvata, ma storico compensi non aggiornato: ${h.error.message}`, "error");
+  }
 
   if (Number.isFinite(quota) && quota !== employee.annualQuota) {
     const res = await supabaseClient.from("profiles").update({ annual_quota: quota }).eq("id", employee.id);
@@ -2934,6 +3227,27 @@ function invoiceNumber(ym) {
   return `INV-${ym.replace("-", "")}`;
 }
 
+// Numero proposto: progressivo dopo l'ultima fattura validata dello stesso anno
+// (es. 01 → 02, 2026/3 → 2026/4). Se non ce ne sono, resta INV-AAAAMM.
+function nextInvoiceNo(ym, validations) {
+  const year = ym.slice(0, 4);
+  const prev = (validations || [])
+    .filter((v) => v.month.slice(0, 4) === year && v.month.slice(0, 7) < ym)
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map((v) => v.details?.invoice_number || "")
+    .filter((n) => n && !/^INV-\d{6}$/.test(n));
+  const last = prev[prev.length - 1];
+  const m = last && last.match(/^(.*?)(\d+)(\D*)$/);
+  if (!m) return invoiceNumber(ym);
+  const next = String(Number(m[2]) + 1).padStart(m[2].length, "0");
+  return `${m[1]}${next}${m[3]}`;
+}
+
+function duplicateInvoiceNo(no, ym, validations) {
+  return (validations || []).find((v) => v.month.slice(0, 4) === ym.slice(0, 4) &&
+    v.month.slice(0, 7) !== ym && (v.details?.invoice_number || "").trim() === no.trim());
+}
+
 function defaultInvoiceDescription(ym, daily) {
   return daily ? `Services - ${monthNameEn(ym)} (days worked)` : `Services - ${monthNameEn(ym)}`;
 }
@@ -3105,7 +3419,7 @@ async function generateInvoice() {
     worked_days: ps.worked,
     details: {
       pay_type: ps.payType,
-      invoice_number: ps.invoiceNo || invoiceNumber(state.payMonth),
+      invoice_number: ps.invoiceNo || nextInvoiceNo(state.payMonth, state.validations),
       description: ps.description || "",
       base: Math.round(ps.base * 100) / 100,
       items: ps.items.map((i) => ({ kind: i.kind, description: i.description, days: i.days, amount: i.amount }))

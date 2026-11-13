@@ -115,6 +115,7 @@
           <button class="nav-item" data-view-target="history" type="button">Storico</button>
           <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
           <button class="nav-item admin-only" data-view-target="calendar" type="button">Calendario</button>
+          <button class="nav-item admin-only" data-view-target="costs" type="button">Costi</button>
           <button class="nav-item admin-only" data-view-target="employees" type="button">Dipendenti</button>
           <button class="nav-item admin-only" data-view-target="users" type="button">Utenti <span class="badge-count hidden" id="usersBadge">0</span></button>
         </nav>
@@ -147,6 +148,8 @@
           </div>
 
           <div class="metrics-grid" id="metricsGrid"></div>
+
+          <div class="alerts-grid hidden" id="dashAlerts"></div>
 
           <div class="two-col">
             <article class="card">
@@ -198,6 +201,10 @@
               <label>
                 <span>Data fine</span>
                 <input type="date" id="endDate" required />
+              </label>
+              <label class="checkbox-line full-width">
+                <input type="checkbox" id="halfDay" />
+                <span>Mezza giornata (solo per un giorno: stessa data di inizio e fine)</span>
               </label>
               <label class="full-width">
                 <span>Note (opzionale)</span>
@@ -322,6 +329,7 @@
               <strong id="calTitle" class="cal-title"></strong>
               <button class="ghost-button" id="calNext" type="button" aria-label="Mese successivo">→</button>
               <button class="ghost-button" id="calToday" type="button">Oggi</button>
+              <button class="ghost-button" id="calIcs" type="button" title="Scarica le assenze approvate e importale nel calendario di Outlook">Esporta per Outlook</button>
             </div>
           </div>
           <article class="card">
@@ -335,6 +343,21 @@
             <div class="cal-scroll" id="calGrid"></div>
             <p class="muted cal-hol" id="calHolidays"></p>
             <div class="cal-clashes" id="calClashes"></div>
+          </article>
+        </section>
+
+        <!-- COSTI (admin) -->
+        <section class="view-panel admin-only" data-view="costs">
+          <div class="page-head">
+            <div>
+              <h1>Costi del team</h1>
+              <p class="muted">Fatture validate più la stima dei mesi non ancora validati, per reparto e per mese.</p>
+            </div>
+            <label class="cost-year"><span>Anno</span><select id="costYear"></select></label>
+          </div>
+          <div class="metrics-grid" id="costMetrics"></div>
+          <article class="card">
+            <div id="costTable"></div>
           </article>
         </section>
 

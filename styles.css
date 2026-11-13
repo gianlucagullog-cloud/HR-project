@@ -874,3 +874,33 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .cal-clashes { margin-top: 12px; font-size: 13px; }
 .cal-clashes ul { margin: 6px 0 0; padding-left: 18px; }
 @media (max-width: 640px) { .cal-table .cal-name { min-width: 110px; } }
+
+/* ---------- Avvisi dashboard ---------- */
+.alerts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.alert-card { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow-sm); }
+.alert-card.warn { border-left-color: var(--warning); }
+.alert-card.is-done { border-left-color: var(--success); }
+.alert-card header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.alert-card header .muted { font-size: 13px; }
+.checklist { list-style: none; margin: 0; padding: 0; font-size: 14px; display: grid; gap: 4px; color: var(--ink-2); }
+.checklist li.ok { color: var(--success); }
+.checklist li.bad { color: var(--danger); }
+.conflict-note { margin-top: 6px; font-size: 13px; color: var(--warning); background: var(--warning-soft); padding: 6px 10px; border-radius: var(--radius-sm); }
+.checkbox-line { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }
+.checkbox-line input { width: auto; }
+.cal-half { background-image: linear-gradient(to top right, transparent 50%, var(--surface-2) 50%) !important; }
+
+/* ---------- Costi ---------- */
+.cost-year { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.cost-year select { width: auto; min-width: 110px; }
+.cost-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cost-table th, .cost-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.cost-table th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: capitalize; }
+.cost-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.cost-table .is-est { font-style: italic; color: var(--ink-2); }
+.cost-table tfoot td { font-weight: 700; border-top: 2px solid var(--line-strong); border-bottom: 0; }
+.cost-table .dir-sub { display: block; font-size: 12px; color: var(--muted); }
+.cost-note { font-size: 12px; margin-top: 10px; }
+.cost-sub { margin: 24px 0 8px; font-size: 15px; }
+.view-panel[data-view="costs"], .view-panel[data-view="calendar"] { min-width: 0; max-width: 100%; }
+.view-panel[data-view="costs"] .card, .view-panel[data-view="calendar"] .card { min-width: 0; overflow: hidden; }

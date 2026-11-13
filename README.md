@@ -55,6 +55,18 @@ Setup una tantum: esegui `supabase_payroll.sql` poi `supabase_validations.sql` e
 - I giorni lavorativi escludono weekend e festività nazionali italiane (Pasquetta calcolata, San Francesco 4 ottobre dal 2026): valgono per richieste, saldo ferie e fatture a giornata. I mesi già validati non cambiano.
 - Tab **Calendario** (admin): assenze del mese per dipendente, raggruppate per reparto, con avviso quando due persone dello stesso reparto sono assenti nello stesso giorno.
 
+## Funzioni di supporto
+
+- **Dashboard**: da ottobre elenca chi ha ancora ferie da pianificare entro il 31/12; nei primi 10 giorni del mese mostra la chiusura del mese precedente (fatture validate, inviate, schede incomplete).
+- **Approvazioni**: avviso se nello stesso reparto qualcuno è già assente nelle stesse date, con conferma prima di approvare.
+- **Mezze giornate**: casella nel form richiesta (solo per un giorno), conteggiate 0,5.
+- **Storico compensi**: quando cambi tariffa o salario nella scheda, il portale chiede da quale mese vale; i mesi precedenti restano al compenso vecchio (tabella `employee_rate_history`).
+- **Costi**: tab con fatturato validato + stima dei mesi non validati, per reparto, mese e dipendente.
+- **Fatture**: numero proposto progressivo dopo l'ultimo dell'anno, blocco dei numeri doppi in validazione, avviso se un importo modificato a mano si scosta di oltre il 5% dal calcolo.
+- **Calendario**: pulsante *Esporta per Outlook* (.ics con le assenze approvate da inizio anno).
+
+Setup: esegui `supabase_features.sql` nel SQL Editor.
+
 ## Sicurezza
 
 Esegui `supabase_security.sql` nel SQL Editor: i dipendenti possono inserire solo richieste in attesa, annullare la validazione solo di fatture non ancora inviate e non possono cambiare la propria email.
