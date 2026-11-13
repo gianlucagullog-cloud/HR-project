@@ -50,6 +50,15 @@ Tab **Dipendenti** (solo admin). Per ogni dipendente attivo:
 
 Setup una tantum: esegui `supabase_payroll.sql` poi `supabase_validations.sql` e `supabase_billing.sql` nel SQL Editor (crea `employee_pay` e `payslip_items`, visibili solo agli admin, e blocca la modifica di ruolo/stato/quota da parte dei non-admin).
 
+## Festività e calendario
+
+- I giorni lavorativi escludono weekend e festività nazionali italiane (Pasquetta calcolata, San Francesco 4 ottobre dal 2026): valgono per richieste, saldo ferie e fatture a giornata. I mesi già validati non cambiano.
+- Tab **Calendario** (admin): assenze del mese per dipendente, raggruppate per reparto, con avviso quando due persone dello stesso reparto sono assenti nello stesso giorno.
+
+## Sicurezza
+
+Esegui `supabase_security.sql` nel SQL Editor: i dipendenti possono inserire solo richieste in attesa, annullare la validazione solo di fatture non ancora inviate e non possono cambiare la propria email.
+
 ## Deploy
 
 ### Vercel (consigliato)

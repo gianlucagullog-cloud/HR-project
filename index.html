@@ -114,6 +114,7 @@
           <button class="nav-item admin-only" data-view-target="approvals" type="button">Approvazioni <span class="badge-count hidden" id="pendingBadge">0</span></button>
           <button class="nav-item" data-view-target="history" type="button">Storico</button>
           <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
+          <button class="nav-item admin-only" data-view-target="calendar" type="button">Calendario</button>
           <button class="nav-item admin-only" data-view-target="employees" type="button">Dipendenti</button>
           <button class="nav-item admin-only" data-view-target="users" type="button">Utenti <span class="badge-count hidden" id="usersBadge">0</span></button>
         </nav>
@@ -305,6 +306,35 @@
           </div>
           <article class="card">
             <div id="teamTable" class="stack-list"></div>
+          </article>
+        </section>
+
+        <!-- CALENDARIO TEAM (admin) -->
+        <section class="view-panel admin-only" data-view="calendar">
+          <div class="page-head">
+            <div>
+              <h1>Calendario</h1>
+              <p class="muted">Chi è assente giorno per giorno. Le assenze in attesa sono tratteggiate.</p>
+            </div>
+            <div class="cal-controls">
+              <select id="calDept" aria-label="Reparto"></select>
+              <button class="ghost-button" id="calPrev" type="button" aria-label="Mese precedente">←</button>
+              <strong id="calTitle" class="cal-title"></strong>
+              <button class="ghost-button" id="calNext" type="button" aria-label="Mese successivo">→</button>
+              <button class="ghost-button" id="calToday" type="button">Oggi</button>
+            </div>
+          </div>
+          <article class="card">
+            <div class="cal-legend">
+              <span><i class="cal-swatch cal-ferie"></i>Ferie</span>
+              <span><i class="cal-swatch cal-permesso"></i>Permesso</span>
+              <span><i class="cal-swatch cal-malattia"></i>Malattia</span>
+              <span><i class="cal-swatch cal-ferie cal-pending"></i>In attesa</span>
+              <span><i class="cal-swatch cal-off"></i>Weekend / festivo</span>
+            </div>
+            <div class="cal-scroll" id="calGrid"></div>
+            <p class="muted cal-hol" id="calHolidays"></p>
+            <div class="cal-clashes" id="calClashes"></div>
           </article>
         </section>
 

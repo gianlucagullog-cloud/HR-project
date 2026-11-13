@@ -848,3 +848,29 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
   .metric-value { font-size: 1.6rem; }
   .auth-card { padding: 22px; }
 }
+
+/* ---------- Calendario team ---------- */
+.cal-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.cal-controls select { width: auto; min-width: 170px; }
+.cal-title { min-width: 130px; text-align: center; text-transform: capitalize; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--ink-2); margin-bottom: 12px; }
+.cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line); }
+.cal-scroll { overflow-x: auto; }
+.cal-table { border-collapse: separate; border-spacing: 2px; font-size: 12px; width: 100%; }
+.cal-table th { font-weight: 600; color: var(--ink-2); text-align: center; min-width: 24px; padding: 4px 0; border-radius: 4px; }
+.cal-table td { height: 26px; background: var(--surface-2); border-radius: 4px; }
+.cal-dow { display: block; font-size: 10px; color: var(--muted); font-weight: 500; }
+.cal-table .cal-name { position: sticky; left: 0; background: var(--surface); text-align: left; white-space: nowrap; padding: 0 10px 0 0; min-width: 150px; font-weight: 500; }
+.cal-table .cal-dept td { background: transparent; height: auto; padding: 10px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.cal-off { background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 3px, var(--line) 3px, var(--line) 5px) !important; }
+.cal-table th.cal-off { color: var(--muted); }
+.cal-table th.cal-clash { background: var(--warning-soft); color: var(--warning); }
+.cal-ferie { background: var(--accent) !important; }
+.cal-permesso { background: #5a7bd8 !important; }
+.cal-malattia { background: var(--warning) !important; }
+.cal-pending { opacity: .45; background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,.6) 3px, rgba(255,255,255,.6) 6px) !important; }
+.cal-hol { margin-top: 12px; font-size: 13px; }
+.cal-clashes { margin-top: 12px; font-size: 13px; }
+.cal-clashes ul { margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 640px) { .cal-table .cal-name { min-width: 110px; } }

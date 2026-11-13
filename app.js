@@ -343,6 +343,12 @@ function bindEvents() {
   refs.periodPreset.addEventListener("change", handlePresetChange);
   refs.periodStart.addEventListener("input", handleCustomPeriodChange);
   refs.periodEnd.addEventListener("input", handleCustomPeriodChange);
+
+  // Calendario team
+  document.getElementById("calPrev")?.addEventListener("click", () => shiftCalendar(-1));
+  document.getElementById("calNext")?.addEventListener("click", () => shiftCalendar(1));
+  document.getElementById("calToday")?.addEventListener("click", () => { state.calYm = ""; renderCalendar(); });
+  document.getElementById("calDept")?.addEventListener("change", renderCalendar);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible" || state.periodPreset === "custom") return;
     if (state.periodEnd !== toISODate(new Date())) handlePresetChange();
@@ -1059,7 +1065,7 @@ function syncRoleUI() {
     refs.previewText.innerHTML = `<strong>Vista dipendente</strong> · stai vedendo il portale come lo vede ${self ? "un dipendente, con i tuoi dati" : `<strong>${escapeHtml(viewerProfile().fullName)}</strong>`}. Le richieste inviate sono reali${self ? "" : " e a suo nome"}.`;
   }
   const allowed = role === "admin"
-    ? ["dashboard", "approvals", "history", "team", "employees", "users"]
+    ? ["dashboard", "approvals", "history", "team", "calendar", "employees", "users"]
     : ["request", "mycard", "history"];
 
   if (role && !allowed.includes(state.activeView)) {
@@ -1088,6 +1094,7 @@ function render() {
   renderPendingLists();
   renderHistory();
   renderTeam();
+  renderCalendar();
   renderUsers();
   renderEmployeeSheet();
   renderQuotaChip();
@@ -1280,14 +1287,54 @@ function updateWorkingDaysPreview() {
     : "L'intervallo non contiene giorni lavorativi validi.";
 }
 
+// Festività nazionali italiane (Pasqua/Pasquetta calcolate; San Francesco dal 2026)
+const holidayCache = {};
+function italianHolidays(year) {
+  if (holidayCache[year]) return holidayCache[year];
+  // Pasqua (algoritmo di Meeus/Jones/Butcher)
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  const easter = new Date(year, month - 1, day, 12);
+  const easterMonday = new Date(easter); easterMonday.setDate(easter.getDate() + 1);
+  const map = {
+    [`${year}-01-01`]: "Capodanno",
+    [`${year}-01-06`]: "Epifania",
+    [toISODate(easter)]: "Pasqua",
+    [toISODate(easterMonday)]: "Lunedì dell'Angelo",
+    [`${year}-04-25`]: "Festa della Liberazione",
+    [`${year}-05-01`]: "Festa del Lavoro",
+    [`${year}-06-02`]: "Festa della Repubblica",
+    [`${year}-08-15`]: "Ferragosto",
+    [`${year}-11-01`]: "Ognissanti",
+    [`${year}-12-08`]: "Immacolata",
+    [`${year}-12-25`]: "Natale",
+    [`${year}-12-26`]: "Santo Stefano"
+  };
+  if (year >= 2026) map[`${year}-10-04`] = "San Francesco d'Assisi";
+  return (holidayCache[year] = map);
+}
+
+function holidayName(iso) {
+  return italianHolidays(Number(iso.slice(0, 4)))[iso] || "";
+}
+
+function isWorkingDay(iso) {
+  const dow = new Date(`${iso}T12:00:00`).getDay();
+  return dow !== 0 && dow !== 6 && !holidayName(iso);
+}
+
 function countWorkingDays(startDate, endDate) {
   if (!startDate || !endDate || endDate < startDate) return 0;
   const cursor = new Date(`${startDate}T12:00:00`);
   const end    = new Date(`${endDate}T12:00:00`);
   let count = 0;
   while (cursor <= end) {
-    const d = cursor.getDay();
-    if (d !== 0 && d !== 6) count += 1;
+    if (isWorkingDay(toISODate(cursor))) count += 1;
     cursor.setDate(cursor.getDate() + 1);
   }
   return count;
@@ -1338,6 +1385,94 @@ function renderHistory() {
           </tr>`;
       }).join("")
     : `<tr><td colspan="6" class="empty-state">Nessun risultato.</td></tr>`;
+}
+
+// =====================================================================
+// CALENDARIO TEAM
+// =====================================================================
+
+const LEAVE_CLASS = { Ferie: "cal-ferie", Permesso: "cal-permesso", Malattia: "cal-malattia" };
+
+function shiftCalendar(delta) {
+  const [y, m] = (state.calYm || currentYm()).split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1, 12);
+  state.calYm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const grid = document.getElementById("calGrid");
+  if (!grid || state.profile?.role !== "admin") return;
+  const ym = state.calYm || currentYm();
+  const { start, end } = monthBounds(ym);
+  document.getElementById("calTitle").textContent = monthName(ym);
+
+  const days = [];
+  for (const c = new Date(`${start}T12:00:00`); toISODate(c) <= end; c.setDate(c.getDate() + 1)) {
+    const iso = toISODate(c);
+    days.push({ iso, n: c.getDate(), dow: c.getDay(), hol: holidayName(iso), work: isWorkingDay(iso) });
+  }
+
+  // Filtro reparto
+  const deptSel = document.getElementById("calDept");
+  const deptOf = (id) => getPay(id).department || "Senza reparto";
+  const depts = [...new Set(state.employees.map((e) => deptOf(e.id)))].sort((a, b) => a.localeCompare(b, "it"));
+  const cur = deptSel.value;
+  deptSel.innerHTML = `<option value="">Tutti i reparti</option>` +
+    depts.map((d) => `<option value="${escapeHtml(d)}" ${d === cur ? "selected" : ""}>${escapeHtml(d)}</option>`).join("");
+
+  const emps = state.employees
+    .filter((e) => !cur || deptOf(e.id) === cur)
+    .sort((a, b) => deptOf(a.id).localeCompare(deptOf(b.id), "it") || a.fullName.localeCompare(b.fullName, "it"));
+
+  const reqs = state.requests.filter((r) =>
+    (r.status === "Approved" || r.status === "Pending") && r.startDate <= end && r.endDate >= start);
+  const absenceOn = (empId, iso) => reqs.find((r) => r.employeeId === empId && r.startDate <= iso && r.endDate >= iso);
+
+  // Sovrapposizioni: 2+ persone dello stesso reparto assenti nello stesso giorno lavorativo
+  const clashes = [];
+  const clashDays = new Set();
+  days.filter((d) => d.work).forEach((d) => {
+    const byDept = {};
+    state.employees.forEach((e) => {
+      if (absenceOn(e.id, d.iso)) (byDept[deptOf(e.id)] ||= []).push(e.fullName);
+    });
+    Object.entries(byDept).forEach(([dept, names]) => {
+      if (names.length > 1) { clashes.push({ iso: d.iso, dept, names }); clashDays.add(d.iso); }
+    });
+  });
+
+  const head = `<tr><th class="cal-name">Dipendente</th>${days.map((d) =>
+    `<th class="${d.work ? "" : "cal-off"} ${clashDays.has(d.iso) ? "cal-clash" : ""}" title="${escapeHtml(d.hol || "")}">
+       <span class="cal-dow">${"DLMMGVS"[d.dow]}</span>${d.n}</th>`).join("")}</tr>`;
+
+  let lastDept = null;
+  const body = emps.map((e) => {
+    const dept = deptOf(e.id);
+    const sep = dept !== lastDept ? `<tr class="cal-dept"><td colspan="${days.length + 1}">${escapeHtml(dept)}</td></tr>` : "";
+    lastDept = dept;
+    const cells = days.map((d) => {
+      const r = absenceOn(e.id, d.iso);
+      if (!r || !d.work) return `<td class="${d.work ? "" : "cal-off"}"></td>`;
+      const pend = r.status === "Pending";
+      return `<td class="${LEAVE_CLASS[r.type] || ""} ${pend ? "cal-pending" : ""}"
+                  title="${escapeHtml(`${e.fullName} · ${r.type}${pend ? " (in attesa)" : ""} · ${formatDate(r.startDate)} – ${formatDate(r.endDate)}`)}"></td>`;
+    }).join("");
+    return `${sep}<tr><td class="cal-name">${escapeHtml(e.fullName)}</td>${cells}</tr>`;
+  }).join("");
+
+  grid.innerHTML = `<table class="cal-table"><thead>${head}</thead><tbody>${body ||
+    `<tr><td colspan="${days.length + 1}" class="empty-state">Nessun dipendente.</td></tr>`}</tbody></table>`;
+
+  const hols = days.filter((d) => d.hol);
+  document.getElementById("calHolidays").textContent = hols.length
+    ? `Festività: ${hols.map((d) => `${d.n} ${d.hol}`).join(", ")}`
+    : "";
+
+  document.getElementById("calClashes").innerHTML = clashes.length
+    ? `<strong>Sovrapposizioni nello stesso reparto</strong><ul>${clashes.map((c) =>
+        `<li>${formatDate(c.iso)} · ${escapeHtml(c.dept)}: ${c.names.map(escapeHtml).join(", ")}</li>`).join("")}</ul>`
+    : `<span class="muted">Nessuna sovrapposizione nello stesso reparto questo mese.</span>`;
 }
 
 // =====================================================================
