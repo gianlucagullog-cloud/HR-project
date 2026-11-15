@@ -904,3 +904,8 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .cost-sub { margin: 24px 0 8px; font-size: 15px; }
 .view-panel[data-view="costs"], .view-panel[data-view="calendar"] { min-width: 0; max-width: 100%; }
 .view-panel[data-view="costs"] .card, .view-panel[data-view="calendar"] .card { min-width: 0; overflow: hidden; }
+
+/* ---------- Rimborsi spese ---------- */
+.expenses-card .inv-kpis { margin-bottom: 8px; }
+.exp-sub { margin: 20px 0 8px; font-size: 14px; }
+.expenses-card .pay-item-form { margin-top: 0; }

@@ -65,7 +65,9 @@ Setup una tantum: esegui `supabase_payroll.sql` poi `supabase_validations.sql` e
 - **Fatture**: numero proposto progressivo dopo l'ultimo dell'anno, blocco dei numeri doppi in validazione, avviso se un importo modificato a mano si scosta di oltre il 5% dal calcolo.
 - **Calendario**: pulsante *Esporta per Outlook* (.ics con le assenze approvate da inizio anno).
 
-Setup: esegui `supabase_features.sql` nel SQL Editor.
+- **Rimborsi spese** (scheda dipendente e La mia scheda): il dipendente inserisce data, cosa ha comprato e importo. *Totale da rimborsare* = spese richieste − voci "Rimborso" in fattura. L'admin può inserire il totale con un clic nella fattura del mese (o scegliendo "Rimborso" tra le voci, che si precompila).
+
+Setup: esegui `supabase_features.sql` e `supabase_expenses.sql` nel SQL Editor.
 
 ## Sicurezza
 

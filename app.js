@@ -28,7 +28,8 @@ const state = {
   payItems: [],           // voci del mese selezionato
   payItemsAll: [],        // tutte le voci del dipendente selezionato
   validations: [],        // mesi validati del dipendente selezionato
-  rateHistory: {},        // employee_id -> [{valid_from, pay_type, daily_rate, annual_salary}]
+  rateHistory: {},
+  claims: {},             // employee_id -> richieste rimborso spese        // employee_id -> [{valid_from, pay_type, daily_rate, annual_salary}]
   billing: {},            // anno -> { validations, items } per tutti i dipendenti (admin)
   costYear: 0,
   leaveAdj: {},           // "employeeId|anno" -> giorni godute azzerati
@@ -754,6 +755,7 @@ async function loadMyCard() {
   ]);
   state.myValidations = val.error ? [] : val.data;
   state.myItems = items.error ? [] : items.data;
+  await loadClaims(me);
   if (state.profile.role !== "admin") await loadDrafts(me);
   renderMyCard();
 }
@@ -1007,6 +1009,8 @@ function renderMyCard() {
       </form>
       <div id="mySimBody"></div>
     </article>
+
+    ${expensesCardMarkup(me.id, state.myItems || [], state.profile.role === "admin")}
 
     <article class="card">
       <div class="card-head">
@@ -1608,6 +1612,132 @@ function renderCalendar() {
         `<li>${formatDate(c.iso)} · ${escapeHtml(c.dept)}: ${c.names.map(escapeHtml).join(", ")}</li>`).join("")}</ul>`
     : `<span class="muted">Nessuna sovrapposizione nello stesso reparto questo mese.</span>`;
 }
+
+// =====================================================================
+// RIMBORSI SPESE
+// Totale da rimborsare = spese richieste − voci "Rimborso" inserite in fattura
+// =====================================================================
+
+async function loadClaims(employeeId) {
+  const { data, error } = await supabaseClient.from("expense_claims")
+    .select("id, employee_id, purchase_date, description, amount, created_at")
+    .eq("employee_id", employeeId).order("purchase_date", { ascending: false });
+  state.claims[employeeId] = error ? null : data; // null = tabella non ancora creata
+}
+
+function expenseBalance(employeeId, items) {
+  const claims = state.claims[employeeId] || [];
+  const paid = (items || []).filter((i) => i.kind === "Rimborso" && (!i.employee_id || i.employee_id === employeeId));
+  const requested = claims.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const reimbursed = paid.reduce((s, i) => s + Number(i.amount || 0), 0);
+  return { claims, paid, requested, reimbursed, due: Math.round((requested - reimbursed) * 100) / 100 };
+}
+
+function expensesCardMarkup(employeeId, items, isAdmin) {
+  if (state.claims[employeeId] === null) {
+    return `<article class="card"><div class="card-head"><h3>Rimborsi spese</h3></div>
+      <p class="empty-state">Funzione non ancora attiva: l'HR deve completare la configurazione.</p></article>`;
+  }
+  const b = expenseBalance(employeeId, items);
+  const claimRows = b.claims.length ? b.claims.map((c) => `
+      <tr>
+        <td>${formatDate(c.purchase_date)}</td>
+        <td>${escapeHtml(c.description)}</td>
+        <td class="num">${fmtEur(c.amount)}</td>
+        <td class="num"><button type="button" class="link-button" data-exp-del="${c.id}" data-exp-emp="${employeeId}">Elimina</button></td>
+      </tr>`).join("") : `<tr><td colspan="4" class="empty-state">Nessuna spesa inserita.</td></tr>`;
+  const paidRows = b.paid.length ? b.paid.slice().sort((x, y) => y.month.localeCompare(x.month)).map((i) => `
+      <tr><td>${monthName(i.month.slice(0, 7))}</td><td>${escapeHtml(i.description || "Rimborso")}</td><td class="num">${fmtEur(i.amount)}</td><td></td></tr>`).join("")
+    : `<tr><td colspan="4" class="empty-state">Nessun rimborso ancora inserito in fattura.</td></tr>`;
+
+  return `
+    <article class="card expenses-card">
+      <div class="card-head">
+        <h3>Rimborsi spese</h3>
+        ${isAdmin && b.due > 0 && state.activeView === "employees"
+          ? `<button type="button" class="primary-button" data-exp-invoice="${employeeId}">Metti ${fmtEur(b.due)} nella fattura del mese</button>` : ""}
+      </div>
+      <div class="inv-kpis">
+        <div class="metric-card"><span class="metric-label">Totale da rimborsare</span>
+          <strong class="metric-value ${b.due < 0 ? "negative" : ""}">${fmtEur(b.due)}</strong>
+          <span class="metric-detail">${b.due < 0 ? "rimborsato più del richiesto" : "spese richieste − già rimborsate"}</span></div>
+        <div class="metric-card"><span class="metric-label">Spese richieste</span><strong class="metric-value">${fmtEur(b.requested)}</strong>
+          <span class="metric-detail">${b.claims.length} ${b.claims.length === 1 ? "voce" : "voci"}</span></div>
+        <div class="metric-card"><span class="metric-label">Già rimborsate in fattura</span><strong class="metric-value">${fmtEur(b.reimbursed)}</strong>
+          <span class="metric-detail">voci "Rimborso"</span></div>
+      </div>
+
+      <h4 class="exp-sub">Richiesta rimborsi</h4>
+      <form class="pay-item-form" data-exp-form="${employeeId}" autocomplete="off">
+        <label><span>Data acquisto</span><input type="date" name="date" value="${toISODate(new Date())}" required /></label>
+        <label class="grow"><span>Cosa hai comprato</span><input type="text" name="desc" placeholder="es. Biglietto treno Roma–Milano" required /></label>
+        <label><span>Importo (€)</span><input type="number" name="amount" min="0.01" step="0.01" required /></label>
+        <button type="submit" class="primary-button">Aggiungi spesa</button>
+      </form>
+      <p class="status-message" data-exp-status="${employeeId}"></p>
+      <div class="table-wrap"><table class="cost-table">
+        <thead><tr><th>Data</th><th>Descrizione</th><th class="num">Importo</th><th></th></tr></thead>
+        <tbody>${claimRows}</tbody></table></div>
+
+      <h4 class="exp-sub">Rimborsi già inseriti in fattura</h4>
+      <div class="table-wrap"><table class="cost-table">
+        <thead><tr><th>Mese</th><th>Descrizione</th><th class="num">Importo</th><th></th></tr></thead>
+        <tbody>${paidRows}</tbody></table></div>
+    </article>`;
+}
+
+async function reloadAfterClaims(employeeId) {
+  await loadClaims(employeeId);
+  if (state.activeView === "employees") renderEmployeeSheet(); else renderMyCard();
+}
+
+async function addClaim(form) {
+  const employeeId = form.dataset.expForm;
+  const status = document.querySelector(`[data-exp-status="${employeeId}"]`);
+  const amount = Math.round(Number(form.amount.value) * 100) / 100;
+  const description = form.desc.value.trim();
+  if (!description || !(amount > 0)) return setStatus(status, "Scrivi cosa hai comprato e l'importo.", "error");
+  const { error } = await supabaseClient.from("expense_claims").insert({
+    employee_id: employeeId, purchase_date: form.date.value || toISODate(new Date()), description, amount
+  });
+  if (error) return setStatus(status, `Spesa non salvata: ${error.message}`, "error");
+  await reloadAfterClaims(employeeId);
+}
+
+async function deleteClaim(btn) {
+  if (!confirm("Eliminare questa spesa? Il totale da rimborsare si aggiorna di conseguenza.")) return;
+  const { error } = await supabaseClient.from("expense_claims").delete().eq("id", btn.dataset.expDel);
+  if (error) return alert(`Spesa non eliminata: ${error.message}`);
+  await reloadAfterClaims(btn.dataset.expEmp);
+}
+
+// Admin: inserisce il totale da rimborsare come voce "Rimborso" nel mese della simulazione
+async function claimsToInvoice(employeeId) {
+  const due = expenseBalance(employeeId, state.payItemsAll).due;
+  if (!(due > 0)) return;
+  if (getValidation(state.payMonth)) return setStatus(refs.payStatus, "Mese validato: annulla la validazione per aggiungere il rimborso.", "error");
+  if (!confirm(`Aggiungere ${fmtEur(due)} come voce "Rimborso" nella fattura di ${monthName(state.payMonth).toLowerCase()}?`)) return;
+  const { error } = await supabaseClient.from("payslip_items").insert({
+    employee_id: employeeId, month: monthBounds(state.payMonth).start, kind: "Rimborso",
+    description: "Rimborso spese", days: null, amount: due
+  });
+  if (error) return setStatus(refs.payStatus, payTableError(error), "error");
+  setStatus(refs.payStatus, `Rimborso di ${fmtEur(due)} aggiunto alla fattura di ${monthName(state.payMonth).toLowerCase()}.`, "success");
+  await loadPayItems();
+}
+
+document.addEventListener("submit", (e) => {
+  const f = e.target.closest("[data-exp-form]");
+  if (!f) return;
+  e.preventDefault();
+  addClaim(f);
+});
+document.addEventListener("click", (e) => {
+  const del = e.target.closest("[data-exp-del]");
+  if (del) return deleteClaim(del);
+  const inv = e.target.closest("[data-exp-invoice]");
+  if (inv) claimsToInvoice(inv.dataset.expInvoice);
+});
 
 // =====================================================================
 // COSTI: fatturato validato + stima dei mesi non validati
@@ -2664,6 +2794,8 @@ function renderEmployeeSheet() {
   refs.kpiLeave.textContent = `${fmtDays(lb.remaining)} gg`;
 
   renderPayslip(employee, pay);
+  const box = document.getElementById("empExpenses");
+  if (box) box.innerHTML = expensesCardMarkup(employee.id, state.payItemsAll, true);
 }
 
 function renderPayslip(employee, pay) {
@@ -2798,6 +2930,14 @@ function syncPayItemForm() {
   const isFerie = refs.payItemKind.value === "Ferie pagate";
   refs.payItemDaysWrap.classList.toggle("hidden", !isFerie);
   refs.payItemAmountWrap.classList.toggle("hidden", isFerie);
+  // Rimborso: propone il totale ancora da rimborsare
+  if (!isFerie && state.selectedEmployeeId && !refs.payItemAmount.value) {
+    const due = expenseBalance(state.selectedEmployeeId, state.payItemsAll).due;
+    if (due > 0) {
+      refs.payItemAmount.value = due.toFixed(2);
+      if (!refs.payItemDesc.value) refs.payItemDesc.value = "Rimborso spese";
+    }
+  }
 }
 
 async function loadPayItems() {
@@ -2811,7 +2951,8 @@ async function loadPayItems() {
     supabaseClient.from("payslip_validations")
       .select("*")
       .eq("employee_id", empId)
-      .order("month", { ascending: true })
+      .order("month", { ascending: true }),
+    loadClaims(empId)
   ]);
   if (empId !== state.selectedEmployeeId) return; // nel frattempo è cambiato dipendente
 
