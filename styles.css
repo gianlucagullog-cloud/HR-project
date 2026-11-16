@@ -573,6 +573,7 @@ textarea {
 .badge.Pending  { background: var(--warning-soft); color: var(--warning); }
 .badge.Approved { background: var(--success-soft); color: var(--success); }
 .badge.Rejected { background: var(--danger-soft);  color: var(--danger);  }
+.badge.Revoked  { background: #eef0f4; color: #5b6475; text-decoration: line-through; }
 .badge.active   { background: var(--success-soft); color: var(--success); }
 .badge.pending  { background: var(--warning-soft); color: var(--warning); }
 .badge.disabled { background: var(--surface-2);    color: var(--muted);   }

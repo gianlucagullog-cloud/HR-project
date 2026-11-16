@@ -1326,6 +1326,7 @@ function renderPendingLists() {
 
   refs.approvalQueue.querySelectorAll("[data-action]").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      if (btn.dataset.action === "Partial") return openPartialDialog(btn.dataset.id, "approve");
       await updateRequestStatus(btn.dataset.id, btn.dataset.action);
     });
   });
@@ -1345,11 +1346,12 @@ function requestCardMarkup(request, withActions) {
           ${withActions ? conflictNote(request) : ""}
           ${request.notes ? `<p class="meta-line">📝 ${escapeHtml(request.notes)}</p>` : ""}
         </div>
-        <span class="badge ${request.status}">${request.status}</span>
+        <span class="badge ${request.status}">${STATUS_LABEL[request.status] || request.status}</span>
       </div>
       ${withActions ? `
         <div class="request-actions">
           <button class="action-button approve" data-id="${request.id}" data-action="Approved">Approva</button>
+          ${request.halfDay ? "" : `<button class="action-button neutral" data-id="${request.id}" data-action="Partial">Approva parzialmente</button>`}
           <button class="action-button reject"  data-id="${request.id}" data-action="Rejected">Rifiuta</button>
         </div>` : ""}
     </article>
@@ -1377,6 +1379,103 @@ function conflictNote(request) {
 
 function emptyStateMarkup(text) {
   return `<p class="empty-state">${escapeHtml(text)}</p>`;
+}
+
+const STATUS_LABEL = { Pending: "In attesa", Approved: "Approvata", Rejected: "Rifiutata", Revoked: "Revocata" };
+
+function addNote(notes, line) {
+  return [String(notes || "").trim(), line].filter(Boolean).join("\n");
+}
+
+// Revoca totale di una richiesta approvata
+async function revokeRequest(id) {
+  const req = state.requests.find((r) => r.id === id);
+  if (!req) return;
+  const name = getEmployeeById(req.employeeId)?.fullName || "il dipendente";
+  if (!confirm(`Revocare ${req.type.toLowerCase()} di ${name} dal ${formatDate(req.startDate)} al ${formatDate(req.endDate)} (${fmtDays(req.workingDays)} gg)?\n\nLa richiesta resta nello storico come "Revocata" e i giorni tornano disponibili.`)) return;
+  const { error } = await supabaseClient.from("leave_requests").update({
+    status: "Revoked",
+    notes: addNote(req.notes, `Revocata il ${formatDate(toISODate(new Date()))}`)
+  }).eq("id", id);
+  if (error) {
+    return alert(/status_check|violates check/i.test(error.message)
+      ? "Stato 'Revocata' non ancora attivo: esegui supabase_leave_revoke.sql su Supabase."
+      : `Errore: ${error.message}`);
+  }
+  await refreshData();
+}
+
+// Approvazione parziale (richiesta in attesa) o revoca parziale (richiesta approvata):
+// si scelgono le date da mantenere approvate, dentro il periodo originale.
+function openPartialDialog(id, mode) {
+  const req = state.requests.find((r) => r.id === id);
+  if (!req) return;
+  document.getElementById("partialDialog")?.remove();
+  const name = getEmployeeById(req.employeeId)?.fullName || "Dipendente";
+  const approve = mode === "approve";
+  const wrap = document.createElement("div");
+  wrap.id = "partialDialog";
+  wrap.className = "cred-overlay";
+  wrap.innerHTML = `
+    <form class="cred-dialog card" autocomplete="off">
+      <h3>${approve ? "Approva parzialmente" : "Revoca parzialmente"}</h3>
+      <p class="meta-line">${escapeHtml(name)} · ${escapeHtml(req.type)} · richiesti ${formatDate(req.startDate)} → ${formatDate(req.endDate)} (${fmtDays(req.workingDays)} gg)</p>
+      <p class="metric-detail">Scegli il periodo che resta <strong>approvato</strong>. ${approve ? "I giorni esclusi non vengono concessi." : "I giorni esclusi vengono revocati e tornano disponibili."}</p>
+      <label><span>Dal</span><input type="date" name="start" value="${req.startDate}" min="${req.startDate}" max="${req.endDate}" required /></label>
+      <label><span>Al</span><input type="date" name="end" value="${req.endDate}" min="${req.startDate}" max="${req.endDate}" required /></label>
+      <p class="info-banner" data-partial-info></p>
+      <p class="status-message" data-partial-status></p>
+      <div class="cred-actions">
+        <button type="button" class="ghost-button" data-partial-cancel>Annulla</button>
+        <button type="submit" class="primary-button">${approve ? "Approva questi giorni" : "Conferma"}</button>
+      </div>
+    </form>`;
+  document.body.appendChild(wrap);
+  const form = wrap.querySelector("form");
+  const info = wrap.querySelector("[data-partial-info]");
+  const statusEl = wrap.querySelector("[data-partial-status]");
+  const close = () => wrap.remove();
+  wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+  wrap.querySelector("[data-partial-cancel]").addEventListener("click", close);
+
+  const calc = () => {
+    const s = form.start.value, e = form.end.value;
+    const ok = s && e && s <= e && s >= req.startDate && e <= req.endDate;
+    const kept = ok ? countWorkingDays(s, e) : 0;
+    info.textContent = ok
+      ? `Restano approvati ${fmtDays(kept)} gg su ${fmtDays(req.workingDays)} · ${approve ? "non concessi" : "revocati"} ${fmtDays(Math.max(req.workingDays - kept, 0))} gg`
+      : "Intervallo non valido: deve stare dentro il periodo richiesto.";
+    return { ok, s, e, kept };
+  };
+  form.addEventListener("input", calc);
+  calc();
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const { ok, s, e, kept } = calc();
+    if (!ok || kept <= 0) return setStatus(statusEl, "Scegli un periodo con almeno un giorno lavorativo.", "error");
+    if (s === req.startDate && e === req.endDate) {
+      return setStatus(statusEl, approve ? "Hai selezionato tutto il periodo: usa \"Approva\"." : "Nessun giorno da revocare.", "error");
+    }
+    if (approve) {
+      const c = requestConflicts({ ...req, startDate: s, endDate: e });
+      if (c.length && !confirm(`Attenzione: nello stesso reparto è già assente ${c.map((r) => getEmployeeById(r.employeeId)?.fullName).join(", ")} in quelle date.\n\nApprovare comunque?`)) return;
+    }
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    const today = formatDate(toISODate(new Date()));
+    const line = approve
+      ? `Approvata parzialmente il ${today}: richiesti ${formatDate(req.startDate)} → ${formatDate(req.endDate)} (${fmtDays(req.workingDays)} gg), approvati ${formatDate(s)} → ${formatDate(e)} (${fmtDays(kept)} gg)`
+      : `Revocata parzialmente il ${today}: approvati prima ${formatDate(req.startDate)} → ${formatDate(req.endDate)} (${fmtDays(req.workingDays)} gg), ora ${formatDate(s)} → ${formatDate(e)} (${fmtDays(kept)} gg)`;
+    const { error } = await supabaseClient.from("leave_requests").update({
+      status: "Approved", start_date: s, end_date: e, working_days: kept, half_day: false,
+      notes: addNote(req.notes, line)
+    }).eq("id", id);
+    btn.disabled = false;
+    if (error) return setStatus(statusEl, `Errore: ${error.message}`, "error");
+    close();
+    await refreshData();
+  });
 }
 
 async function updateRequestStatus(id, status) {
@@ -1568,11 +1667,33 @@ function renderHistory() {
             <td>${escapeHtml(r.type)}</td>
             <td>${formatDate(r.startDate)} → ${formatDate(r.endDate)}</td>
             <td>${r.workingDays}</td>
-            <td><span class="badge ${r.status}">${r.status}</span></td>
+            <td><span class="badge ${r.status}">${STATUS_LABEL[r.status] || r.status}</span>${r.notes && /parzialmente|Revocata/.test(r.notes) ? ` <span class="muted" title="${escapeHtml(r.notes)}">ⓘ</span>` : ""}</td>
             <td>${formatDate(r.createdAt)}</td>
+            <td class="admin-only">${!isEmployee && r.status === "Approved" ? `
+              <div class="user-actions">
+                ${r.halfDay || r.workingDays <= 1 ? "" : `<button type="button" class="action-button neutral" data-hist-action="partial" data-id="${r.id}">Revoca parziale</button>`}
+                <button type="button" class="action-button reject" data-hist-action="revoke" data-id="${r.id}">Revoca</button>
+              </div>` : !isEmployee && r.status === "Pending" ? `
+              <div class="user-actions">
+                <button type="button" class="action-button approve" data-hist-action="approve" data-id="${r.id}">Approva</button>
+                ${r.halfDay ? "" : `<button type="button" class="action-button neutral" data-hist-action="approve-partial" data-id="${r.id}">Parziale</button>`}
+                <button type="button" class="action-button reject" data-hist-action="reject" data-id="${r.id}">Rifiuta</button>
+              </div>` : ""}</td>
           </tr>`;
       }).join("")
-    : `<tr><td colspan="6" class="empty-state">Nessun risultato.</td></tr>`;
+    : `<tr><td colspan="7" class="empty-state">Nessun risultato.</td></tr>`;
+
+  refs.historyTableBody.querySelectorAll("[data-hist-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const a = btn.dataset.histAction;
+      if (a === "revoke") return revokeRequest(id);
+      if (a === "partial") return openPartialDialog(id, "revoke");
+      if (a === "approve-partial") return openPartialDialog(id, "approve");
+      if (a === "approve") return updateRequestStatus(id, "Approved");
+      if (a === "reject") return updateRequestStatus(id, "Rejected");
+    });
+  });
 }
 
 // =====================================================================
