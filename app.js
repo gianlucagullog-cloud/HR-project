@@ -3128,8 +3128,8 @@ function renderInvoiceHistory(employee, pay) {
     const { start: mStart, end: mEnd } = monthBounds(ym);
     const workable = countWorkingDays(mStart, mEnd);
     const worked = v ? Number(v.worked_days) || 0 : (future ? null : ps.worked);
-    totWorkable += workable;
-    if (worked != null) totWorked += worked;
+    // Totale anno: solo i mesi validati
+    if (v) { totWorkable += workable; totWorked += worked; }
     const daysCell = worked == null
       ? `${workable} / <span class="muted">-</span>`
       : v ? `${workable} / ${fmtDays(worked)}`
@@ -3156,7 +3156,7 @@ function renderInvoiceHistory(employee, pay) {
   refs.invBody.innerHTML = rows.join("") ||
     `<tr><td colspan="5" class="empty-state">Contratto non ancora iniziato in questo anno.</td></tr>`;
   const totDaysEl = document.getElementById("invTotDays");
-  if (totDaysEl) totDaysEl.textContent = rows.length ? `${totWorkable} / ${fmtDays(totWorked)}` : "-";
+  if (totDaysEl) totDaysEl.textContent = validatedCount ? `${totWorkable} / ${fmtDays(totWorked)}` : "-";
   refs.invTotSim.textContent = fmtEur(totSim);
   refs.invTotVal.textContent = fmtEur(totVal);
   refs.invYearValidated.textContent = fmtEur(totVal);
