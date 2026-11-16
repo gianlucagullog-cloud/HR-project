@@ -922,3 +922,11 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .days-input.is-edited { border-color: #d97706; background: #fff7ed; font-weight: 700; }
 .days-input::-webkit-inner-spin-button { opacity: 0.4; }
 .days-edited-mark { color: #d97706; font-weight: 700; cursor: help; }
+
+/* Dialog credenziali utente */
+.cred-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: grid; place-items: center; z-index: 1000; padding: 16px; }
+.cred-dialog { width: min(420px, 100%); display: grid; gap: 12px; margin: 0; }
+.cred-dialog h3 { margin: 0; }
+.cred-dialog label { display: grid; gap: 4px; font-size: 0.9rem; font-weight: 600; }
+.cred-dialog input { font: inherit; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; }
+.cred-actions { display: flex; justify-content: flex-end; gap: 8px; }

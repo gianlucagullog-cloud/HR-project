@@ -2026,6 +2026,7 @@ function renderUsers() {
             ` : `
               <button class="action-button approve" data-user-action="activate">Riattiva</button>
             `}
+            <button class="action-button neutral" data-user-action="credentials" title="Modifica email e password di accesso">Credenziali</button>
             ${isSelf ? "" : `<button class="action-button reject" data-user-action="delete" title="Elimina definitivamente">Elimina</button>`}
           </div>
         </td>
@@ -2066,11 +2067,81 @@ async function deleteUser(userId, name) {
   await refreshData();
 }
 
+// Modifica email / password di un utente esistente (Edge Function "admin-update-user")
+function openCredentialsDialog(user) {
+  if (!user) return;
+  document.getElementById("credDialog")?.remove();
+  const isSelf = user.id === state.profile.id;
+  const wrap = document.createElement("div");
+  wrap.id = "credDialog";
+  wrap.className = "cred-overlay";
+  wrap.innerHTML = `
+    <form class="cred-dialog card" autocomplete="off">
+      <h3>Credenziali di accesso</h3>
+      <p class="meta-line">${escapeHtml(user.fullName)}</p>
+      <label><span>Email</span>
+        <input type="email" name="email" value="${escapeHtml(user.email)}" required /></label>
+      <label><span>Nuova password</span>
+        <input type="password" name="password" minlength="8" autocomplete="new-password" placeholder="Lascia vuoto per non cambiarla" /></label>
+      <label><span>Ripeti password</span>
+        <input type="password" name="password2" autocomplete="new-password" /></label>
+      ${isSelf ? `<p class="metric-detail">Stai modificando il tuo account: se cambi email o password dovrai rientrare con i nuovi dati.</p>` : ""}
+      <p class="status-message" data-cred-status></p>
+      <div class="cred-actions">
+        <button type="button" class="ghost-button" data-cred-cancel>Annulla</button>
+        <button type="submit" class="primary-button">Salva credenziali</button>
+      </div>
+    </form>`;
+  document.body.appendChild(wrap);
+  const form = wrap.querySelector("form");
+  const statusEl = wrap.querySelector("[data-cred-status]");
+  const close = () => wrap.remove();
+  wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+  wrap.querySelector("[data-cred-cancel]").addEventListener("click", close);
+  form.email.focus();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = form.email.value.trim().toLowerCase();
+    const password = form.password.value;
+    const payload = { user_id: user.id };
+    if (email && email !== String(user.email || "").toLowerCase()) payload.email = email;
+    if (password) {
+      if (password.length < 8) return setStatus(statusEl, "La password deve avere almeno 8 caratteri.", "error");
+      if (password !== form.password2.value) return setStatus(statusEl, "Le due password non coincidono.", "error");
+      payload.password = password;
+    }
+    if (!payload.email && !payload.password) return setStatus(statusEl, "Nessuna modifica da salvare.", "error");
+
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    setStatus(statusEl, "Salvataggio in corso…");
+    const { error } = await supabaseClient.functions.invoke("admin-update-user", { body: payload });
+    btn.disabled = false;
+    if (error) {
+      let message = error.message;
+      try {
+        const details = await error.context?.json?.();
+        if (details?.error) message = details.error;
+      } catch (_) { /* risposta non JSON */ }
+      if (/Failed to send|not found|404/i.test(message)) {
+        message = "Funzione 'admin-update-user' non raggiungibile: verifica che sia pubblicata su Supabase.";
+      }
+      return setStatus(statusEl, message, "error");
+    }
+    const what = [payload.email ? `email ${payload.email}` : null, payload.password ? "password" : null].filter(Boolean).join(" e ");
+    close();
+    alert(`Credenziali di ${user.fullName} aggiornate (${what}).`);
+    await refreshData();
+  });
+}
+
 async function handleUserAction(userId, action, row) {
   const user = state.allUsers.find((u) => u.id === userId);
   const name = user ? `${user.fullName} (${user.email})` : "questo utente";
 
   if (action === "delete") return deleteUser(userId, name);
+  if (action === "credentials") return openCredentialsDialog(user);
 
   if (action === "disable" && user?.status === "active" &&
       !confirm(`Disattivare ${name}?\n\nNon potrà più accedere al portale. Dati e storico restano salvati e puoi riattivarlo quando vuoi.`)) {
