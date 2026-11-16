@@ -34,6 +34,9 @@ const state = {
   billing: {},            // anno -> { validations, items } per tutti i dipendenti (admin)
   costYear: 0,
   leaveAdj: {},           // "employeeId|anno" -> giorni godute azzerati
+  monthDays: {},          // "employeeId|YYYY-MM" -> { workable, worked } modificati a mano
+  valDays: {},            // "employeeId|YYYY-MM" -> giorni lavorati della fattura validata
+  monthDaysAvailable: true,
   myValidations: [],      // fatture validate del dipendente loggato ("La mia scheda")
   myItems: [],            // voci extra (rimborsi ecc.) del dipendente loggato
   myMonth: "",            // mese della simulazione in "La mia scheda" (YYYY-MM)
@@ -599,7 +602,7 @@ async function refreshData() {
   }
 
   if (state.profile.role === "admin") {
-    await Promise.all([loadDrafts(), loadRateHistory(), loadBillingYear(new Date().getFullYear()), loadPrevMonthBilling()]);
+    await Promise.all([loadDrafts(), loadRateHistory(), loadBillingYear(new Date().getFullYear()), loadPrevMonthBilling(), loadMonthDays()]);
   }
 
   populateEmployeeOptions();
@@ -756,6 +759,10 @@ async function loadMyCard() {
   ]);
   state.myValidations = val.error ? [] : val.data;
   state.myItems = items.error ? [] : items.data;
+  state.myValidations.forEach((v) => {
+    state.valDays[`${me}|${v.month.slice(0, 7)}`] = Number(v.worked_days) || 0;
+  });
+  if (state.profile.role !== "admin") await loadMonthDays(me);
   await loadClaims(me);
   if (state.profile.role !== "admin") await loadDrafts(me);
   renderMyCard();
@@ -904,10 +911,17 @@ function renderMyCard() {
   const pct = lb.total ? Math.min(100, Math.round((lb.used / lb.total) * 100)) : 0;
   const dash = (v) => (v ? escapeHtml(v) : `<span class="muted">-</span>`);
 
+  // Salario effettivamente generato nell'anno: somma delle fatture validate
+  const generated = state.myValidations.filter((v) => v.month.startsWith(String(year)));
+  const generatedTotal = generated.reduce((s, v) => s + Number(v.amount || 0), 0);
+  const generatedKpi = `<div><span class="metric-label">Generato ${year}</span><strong>${fmtEur(generatedTotal)}</strong>
+       <span class="metric-detail">${generated.length} ${generated.length === 1 ? "mese validato" : "mesi validati"}</span></div>`;
   const kpis = hasCard ? (fixed
-    ? `<div><span class="metric-label">Salario annuo</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>`
+    ? `<div><span class="metric-label">Salario annuo da contratto</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>
+       ${generatedKpi}`
     : `<div><span class="metric-label">Daily rate</span><strong>${pay.dailyRate ? fmtEur(pay.dailyRate) : "-"}</strong></div>
-       <div><span class="metric-label">Salario annuo</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>`) : "";
+       <div><span class="metric-label">Salario annuo da contratto</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>
+       ${generatedKpi}`) : generatedKpi;
 
   // "Le mie fatture": tutti i 12 mesi dell'anno corrente con giorni lavorativi
   // da calendario italiano (lun-ven esclusi festivi) e giorni lavorati/fatturati.
@@ -917,29 +931,32 @@ function renderMyCard() {
   state.myValidations.forEach((v) => { valByYm[v.month.slice(0, 7)] ??= v; });
   const yearRows = Array.from({ length: 12 }, (_, i) => {
     const ym = `${yearStr}-${String(i + 1).padStart(2, "0")}`;
-    const { start, end } = monthBounds(ym);
-    return { ym, calDays: countWorkingDays(start, end), v: valByYm[ym] || null };
+    const d = monthDaysInfo(me.id, pay, ym);
+    return { ym, d, calDays: d.workable, worked: d.worked, v: valByYm[ym] || null };
   });
   const olderRows = state.myValidations
     .filter((v) => !v.month.startsWith(yearStr))
     .map((v) => {
       const ym = v.month.slice(0, 7);
-      const { start, end } = monthBounds(ym);
-      return { ym, calDays: countWorkingDays(start, end), v };
+      const d = monthDaysInfo(me.id, pay, ym);
+      return { ym, d, calDays: d.workable, worked: d.worked, v };
     });
   const billed = yearRows.filter((r) => r.v);
   const yearTotal = billed.reduce((s, r) => s + Number(r.v.amount || 0), 0);
-  const yearWorked = billed.reduce((s, r) => s + Number(r.v.worked_days || 0), 0);
-  const yearCalBilled = billed.reduce((s, r) => s + r.calDays, 0);
+  // Totale giorni: solo mesi validati o con giorni lavorati inseriti dall'HR
+  const counted = yearRows.filter((r) => r.d.counted);
+  const yearWorked = counted.reduce((s, r) => s + Number(r.worked || 0), 0);
+  const yearCalBilled = counted.reduce((s, r) => s + r.calDays, 0);
+  const editedMark = (on, what) => on ? ` <span class="days-edited-mark" title="${what} modificati dall'HR">*</span>` : "";
 
-  const invoiceRow = ({ ym, calDays, v }) => {
+  const invoiceRow = ({ ym, d, calDays, worked, v }) => {
     if (!v) {
       const future = ym > nowYm;
       return `
         <tr class="${future ? "muted" : ""}">
           <td>${monthName(ym)}</td>
-          <td class="num">${calDays}</td>
-          <td class="num"><span class="muted">-</span></td>
+          <td class="num">${fmtDays(calDays)}${editedMark(d.workableEdited, "Giorni lavorabili")}</td>
+          <td class="num">${worked != null ? `${fmtDays(worked)}${editedMark(d.workedEdited, "Giorni lavorati")}` : `<span class="muted">-</span>`}</td>
           <td><span class="muted">-</span></td>
           <td class="num"><span class="muted">-</span></td>
           <td><span class="muted">${future ? "Da maturare" : "Non fatturata"}</span></td>
@@ -949,8 +966,8 @@ function renderMyCard() {
     return `
       <tr>
         <td>${monthName(ym)}</td>
-        <td class="num">${calDays}</td>
-        <td class="num">${fmtDays(v.worked_days)}</td>
+        <td class="num">${fmtDays(calDays)}${editedMark(d.workableEdited, "Giorni lavorabili")}</td>
+        <td class="num">${fmtDays(worked)}${editedMark(d.workedEdited, "Giorni lavorati")}</td>
         <td>${escapeHtml(invoiceNumberOf(v, ym))}</td>
         <td class="num">${fmtEur(v.amount)}</td>
         <td>${v.sent_at
@@ -975,9 +992,9 @@ function renderMyCard() {
         <tfoot>
           <tr>
             <td>Totale ${year}</td>
-            <td class="num">${billed.length ? yearCalBilled : "-"}</td>
-            <td class="num">${fmtDays(yearWorked)}</td>
-            <td colspan="4"><span class="muted">Solo mesi validati: ${billed.length} ${billed.length === 1 ? "mese" : "mesi"}</span></td>
+            <td class="num">${counted.length ? fmtDays(yearCalBilled) : "-"}</td>
+            <td class="num">${counted.length ? fmtDays(yearWorked) : "-"}</td>
+            <td colspan="4"><span class="muted">Solo mesi validati: ${counted.length} ${counted.length === 1 ? "mese" : "mesi"}</span></td>
           </tr>
         </tfoot>
         ${olderRows.length ? `
@@ -987,7 +1004,7 @@ function renderMyCard() {
         </tbody>` : ""}
       </table>
     </div>
-    <p class="metric-detail">Giorni lavorativi: lunedì-venerdì secondo il calendario italiano, esclusi i festivi nazionali. Giorni lavorati: quelli indicati nella fattura validata. Il totale anno considera solo i mesi validati.</p>`;
+    <p class="metric-detail">Giorni lavorativi: lunedì-venerdì secondo il calendario italiano, esclusi i festivi nazionali. Giorni lavorati: quelli indicati nella fattura validata. Il totale anno considera solo i mesi validati. * = valore modificato dall'HR.${year === DAYS_LEAVE_YEAR ? ` Nel ${year} le ferie godute sono la differenza tra giorni lavorabili e giorni lavorati di questi mesi.` : ""}</p>`;
 
   refs.myCard.innerHTML = `
     <article class="card emp-identity">
@@ -1010,7 +1027,7 @@ function renderMyCard() {
         <div class="leave-grid">
           <div class="metric-card"><span class="metric-label">Totale spettante</span><strong class="metric-value">${fmtDays(lb.total)} gg</strong>
             <span class="metric-detail">${lb.months < 12 ? `Pro-rata ${lb.months}/12 di ${lb.quota} gg` : `Quota annua ${lb.quota} gg`}</span></div>
-          <div class="metric-card"><span class="metric-label">Godute</span><strong class="metric-value">${fmtDays(lb.used)} gg</strong><span class="metric-detail">Ferie approvate</span></div>
+          <div class="metric-card"><span class="metric-label">Godute</span><strong class="metric-value">${fmtDays(lb.used)} gg</strong><span class="metric-detail">${lb.daysMode ? `Lavorabili − lavorati (${lb.daysMonths} ${lb.daysMonths === 1 ? "mese" : "mesi"})` : "Ferie approvate"}</span></div>
           <div class="metric-card"><span class="metric-label">In attesa</span><strong class="metric-value">${fmtDays(lb.pending)} gg</strong><span class="metric-detail">Da approvare</span></div>
           <div class="metric-card"><span class="metric-label">Residue</span><strong class="metric-value ${lb.remaining < 0 ? "negative" : ""}">${fmtDays(lb.remaining)} gg</strong><span class="metric-detail">Totale − godute</span></div>
         </div>
@@ -2279,7 +2296,25 @@ function bindEmployeeSheetEvents() {
     else unvalidateMonth();
   });
 
+  refs.invBody.addEventListener("change", async (event) => {
+    const input = event.target.closest("[data-days-field]");
+    if (!input) return;
+    const employee = getEmployeeById(state.selectedEmployeeId);
+    if (!employee) return;
+    input.disabled = true;
+    const ym = input.dataset.daysMonth, field = input.dataset.daysField;
+    let raw = input.value.trim();
+    // Valore uguale a quello calcolato/validato = nessuna modifica manuale
+    const d = monthDaysInfo(employee.id, getPay(employee.id), ym);
+    if (raw !== "" && field === "workable" && Number(raw) === d.calcWorkable) raw = "";
+    if (raw !== "" && field === "worked" && d.validated != null && Number(raw) === d.validated) raw = "";
+    const err = await saveMonthDays(employee.id, ym, field, raw);
+    setStatus(refs.payStatus, err ? err : `Giorni di ${monthName(input.dataset.daysMonth)} aggiornati.`, err ? "error" : "success");
+    renderEmployeeSheet();
+  });
+
   refs.invBody.addEventListener("click", async (event) => {
+    if (event.target.closest("input, button")) return;
     const row = event.target.closest("[data-month]");
     if (!row) return;
     state.payMonth = row.dataset.month;
@@ -2425,6 +2460,102 @@ function sumDays(employeeId, from, to, { type, status }) {
     .reduce((sum, r) => sum + clippedWorkingDays(r, from, to), 0);
 }
 
+// ---------------------------------------------------------------------
+// Giorni lavorabili / lavorati per mese (con modifiche manuali dell'HR)
+// ---------------------------------------------------------------------
+const DAYS_LEAVE_YEAR = 2026; // anno in cui le ferie = lavorabili − lavorati
+
+async function loadMonthDays(employeeId) {
+  if (!supabaseClient) return;
+  let q = supabaseClient.from("month_days").select("employee_id, month, workable_days, worked_days");
+  if (employeeId) q = q.eq("employee_id", employeeId);
+  const res = await q;
+  if (res.error) {
+    state.monthDaysAvailable = false;
+    console.error(res.error);
+  } else {
+    state.monthDaysAvailable = true;
+    if (!employeeId) state.monthDays = {};
+    res.data.forEach((r) => {
+      state.monthDays[`${r.employee_id}|${r.month.slice(0, 7)}`] = {
+        workable: r.workable_days == null ? null : Number(r.workable_days),
+        worked: r.worked_days == null ? null : Number(r.worked_days)
+      };
+    });
+  }
+  // Admin: giorni lavorati validati di tutti i dipendenti (per il saldo ferie)
+  if (!employeeId && state.profile?.role === "admin") {
+    const v = await supabaseClient.from("payslip_validations").select("employee_id, month, worked_days");
+    if (!v.error) {
+      state.valDays = {};
+      v.data.forEach((r) => { state.valDays[`${r.employee_id}|${r.month.slice(0, 7)}`] = Number(r.worked_days) || 0; });
+    }
+  }
+}
+
+// Giorni lavorabili da calendario (lun-ven esclusi festivi infrasettimanali),
+// dal giorno di inizio contratto se cade nel mese
+function calendarWorkable(pay, ym) {
+  const { start, end } = monthBounds(ym);
+  const cs = pay?.contractStart;
+  if (cs && cs > end) return 0;
+  return countWorkingDays(cs && cs > start ? cs : start, end);
+}
+
+function monthDaysInfo(employeeId, pay, ym) {
+  const key = `${employeeId}|${ym}`;
+  const ov = state.monthDays[key] || {};
+  const calcWorkable = calendarWorkable(pay, ym);
+  const validated = key in state.valDays ? state.valDays[key] : null;
+  const workable = ov.workable != null ? ov.workable : calcWorkable;
+  const worked = ov.worked != null ? ov.worked : validated;
+  return {
+    workable, worked, calcWorkable, validated,
+    workableEdited: ov.workable != null,
+    workedEdited: ov.worked != null,
+    counted: worked != null // mese validato o con giorni lavorati inseriti a mano
+  };
+}
+
+// Ferie godute nell'anno = somma (lavorabili − lavorati) dei mesi conteggiati
+function daysBasedLeave(employee, pay, year) {
+  let used = 0, months = 0;
+  for (let m = 1; m <= 12; m++) {
+    const d = monthDaysInfo(employee.id, pay, `${year}-${String(m).padStart(2, "0")}`);
+    if (!d.counted) continue;
+    months += 1;
+    used += Math.max(d.workable - d.worked, 0);
+  }
+  return { used, months };
+}
+
+async function saveMonthDays(employeeId, ym, field, raw) {
+  const key = `${employeeId}|${ym}`;
+  const cur = { workable: null, worked: null, ...(state.monthDays[key] || {}) };
+  const val = raw === "" || raw == null ? null : Number(raw);
+  if (val != null && (!Number.isFinite(val) || val < 0 || val > 31)) return "Valore non valido (0-31).";
+  cur[field] = val;
+  const { start } = monthBounds(ym);
+  let error;
+  if (cur.workable == null && cur.worked == null) {
+    ({ error } = await supabaseClient.from("month_days").delete().eq("employee_id", employeeId).eq("month", start));
+    if (!error) delete state.monthDays[key];
+  } else {
+    ({ error } = await supabaseClient.from("month_days").upsert({
+      employee_id: employeeId, month: start,
+      workable_days: cur.workable, worked_days: cur.worked,
+      updated_at: new Date().toISOString(), updated_by: state.profile.id
+    }));
+    if (!error) state.monthDays[key] = cur;
+  }
+  if (error) {
+    return /month_days|relation|does not exist|schema cache/i.test(error.message || "")
+      ? "Per salvare i giorni modificati esegui prima supabase_month_days.sql nel SQL Editor di Supabase."
+      : error.message;
+  }
+  return "";
+}
+
 function computeLeaveBalance(employee, pay, year) {
   const quota = employee.annualQuota ?? DEFAULT_QUOTA;
   const from = `${year}-01-01`;
@@ -2439,14 +2570,19 @@ function computeLeaveBalance(employee, pay, year) {
   }
   const total = Math.round(((quota * months) / 12) * 2) / 2;
 
-  const usedRaw = sumDays(employee.id, from, to, { type: "Ferie", status: "Approved" });
+  // 2026: ferie godute = giorni lavorabili − giorni lavorati (mesi validati
+  // o modificati a mano). Altri anni: richieste di ferie approvate.
+  const daysMode = year === DAYS_LEAVE_YEAR;
+  const db = daysMode ? daysBasedLeave(employee, pay, year) : null;
+  const usedRaw = daysMode ? db.used : sumDays(employee.id, from, to, { type: "Ferie", status: "Approved" });
   const offset = state.leaveAdj[`${employee.id}|${year}`] || 0;
   const used = Math.max(usedRaw - offset, 0);
   const pending = sumDays(employee.id, from, to, { type: "Ferie", status: "Pending" });
   const permessi = sumDays(employee.id, from, to, { type: "Permesso", status: "Approved" });
   const malattia = sumDays(employee.id, from, to, { type: "Malattia", status: "Approved" });
 
-  return { quota, months, total, used, usedRaw, offset, pending, permessi, malattia, remaining: total - used };
+  return { quota, months, total, used, usedRaw, offset, pending, permessi, malattia, remaining: total - used,
+    daysMode, daysMonths: db ? db.months : 0 };
 }
 
 // Dati fattura inseriti a mano per dipendente+mese (finché il mese non è validato;
@@ -2902,6 +3038,10 @@ function renderEmployeeSheet() {
     ? `Pro-rata ${lb.months}/12 di ${lb.quota} gg`
     : `Quota annua ${lb.quota} gg`;
   refs.leaveUsed.textContent = `${fmtDays(lb.used)} gg`;
+  const usedDetail = document.getElementById("leaveUsedDetail");
+  if (usedDetail) usedDetail.textContent = lb.daysMode
+    ? `Lavorabili − lavorati (${lb.daysMonths} ${lb.daysMonths === 1 ? "mese" : "mesi"})`
+    : "Ferie approvate nell'anno";
   refs.leavePending.textContent = `${fmtDays(lb.pending)} gg`;
   refs.leaveRemaining.textContent = `${fmtDays(lb.remaining)} gg`;
   refs.leaveRemaining.classList.toggle("negative", lb.remaining < 0);
@@ -3087,6 +3227,10 @@ async function loadPayItems() {
 
   state.payItemsAll = itemsRes.error ? [] : itemsRes.data;
   state.validations = valRes.error ? [] : valRes.data;
+  if (!valRes.error) {
+    Object.keys(state.valDays).forEach((k) => { if (k.startsWith(`${empId}|`)) delete state.valDays[k]; });
+    state.validations.forEach((v) => { state.valDays[`${empId}|${v.month.slice(0, 7)}`] = Number(v.worked_days) || 0; });
+  }
   const err = itemsRes.error || valRes.error;
   if (err) setStatus(refs.payStatus, payTableError(err), "error");
   renderEmployeeSheet();
@@ -3114,7 +3258,7 @@ function renderInvoiceHistory(employee, pay) {
   const startYm = pay.contractStart ? pay.contractStart.slice(0, 7) : null;
 
   let totSim = 0, totVal = 0, open = 0, validatedCount = 0;
-  let totWorkable = 0, totWorked = 0;
+  let totWorkable = 0, totWorked = 0, countedMonths = 0;
   const rows = [];
   for (let m = 1; m <= 12; m++) {
     const ym = `${year}-${String(m).padStart(2, "0")}`;
@@ -3123,16 +3267,23 @@ function renderInvoiceHistory(employee, pay) {
     const v = getValidation(ym);
     const future = ym > currentYm;
     totSim += ps.total;
-    // Giorni lavorabili: lun-ven del mese esclusi i festivi infrasettimanali
-    const { start: mStart, end: mEnd } = monthBounds(ym);
-    const workable = countWorkingDays(mStart, mEnd);
-    const worked = v ? Number(v.worked_days) || 0 : (future ? null : ps.worked);
-    // Totale anno: solo i mesi validati
-    if (v) { totWorkable += workable; totWorked += worked; }
-    const daysCell = worked == null
-      ? `${workable} / <span class="muted">-</span>`
-      : v ? `${workable} / ${fmtDays(worked)}`
-          : `${workable} / <em class="muted" title="Stima: mese non ancora validato">${fmtDays(worked)}</em>`;
+    // Giorni lavorabili (lun-ven esclusi festivi infrasettimanali) e lavorati,
+    // modificabili a mano dall'HR
+    const d = monthDaysInfo(employee.id, pay, ym);
+    // Totale anno: solo i mesi validati o con giorni lavorati inseriti a mano
+    if (d.counted) { totWorkable += d.workable; totWorked += d.worked; countedMonths += 1; }
+    const estimate = !d.counted && !future ? fmtDays(ps.worked) : "";
+    const daysCell = `
+      <span class="days-edit">
+        <input type="number" class="days-input ${d.workableEdited ? "is-edited" : ""}" min="0" max="31" step="0.5"
+          data-days-month="${ym}" data-days-field="workable" value="${d.workable}"
+          placeholder="${d.calcWorkable}" title="${d.workableEdited ? `Modificato a mano (calendario: ${d.calcWorkable}). Svuota per ripristinare.` : "Giorni lavorabili da calendario: modifica per correggere"}" />
+        <span class="muted">/</span>
+        <input type="number" class="days-input ${d.workedEdited ? "is-edited" : ""}" min="0" max="31" step="0.5"
+          data-days-month="${ym}" data-days-field="worked" value="${d.worked != null ? d.worked : ""}"
+          placeholder="${estimate ? `~${estimate}` : "-"}"
+          title="${d.workedEdited ? `Modificato a mano${d.validated != null ? ` (fattura: ${fmtDays(d.validated)})` : ""}. Svuota per ripristinare.` : d.validated != null ? "Giorni della fattura validata: modifica per correggere" : "Mese non validato: scrivi per inserire i giorni lavorati"}" />
+      </span>`;
     if (v) { totVal += Number(v.amount); validatedCount += 1; }
     else if (!future) open += ps.total;
 
@@ -3155,7 +3306,7 @@ function renderInvoiceHistory(employee, pay) {
   refs.invBody.innerHTML = rows.join("") ||
     `<tr><td colspan="5" class="empty-state">Contratto non ancora iniziato in questo anno.</td></tr>`;
   const totDaysEl = document.getElementById("invTotDays");
-  if (totDaysEl) totDaysEl.textContent = validatedCount ? `${totWorkable} / ${fmtDays(totWorked)}` : "-";
+  if (totDaysEl) totDaysEl.textContent = countedMonths ? `${fmtDays(totWorkable)} / ${fmtDays(totWorked)}` : "-";
   refs.invTotSim.textContent = fmtEur(totSim);
   refs.invTotVal.textContent = fmtEur(totVal);
   refs.invYearValidated.textContent = fmtEur(totVal);

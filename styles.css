@@ -913,3 +913,12 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .expenses-card .inv-kpis { margin-bottom: 8px; }
 .exp-sub { margin: 20px 0 8px; font-size: 14px; }
 .expenses-card .pay-item-form { margin-top: 0; }
+
+/* Giorni lavorabili / lavorati modificabili (storico fatture) */
+.days-edit { display: inline-flex; align-items: center; gap: 4px; }
+.days-input { width: 58px; padding: 4px 6px; text-align: right; font: inherit; font-size: 0.9rem;
+  border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface, #fff); }
+.days-input:focus { outline: 2px solid var(--info-soft, #dbe6ff); border-color: #274a9d; }
+.days-input.is-edited { border-color: #d97706; background: #fff7ed; font-weight: 700; }
+.days-input::-webkit-inner-spin-button { opacity: 0.4; }
+.days-edited-mark { color: #d97706; font-weight: 700; cursor: help; }
