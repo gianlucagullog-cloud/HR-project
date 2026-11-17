@@ -83,8 +83,8 @@ Setup una tantum:
 
 1. **Resend**: crea un account su resend.com, verifica il dominio mittente (record DNS) e crea una API key.
 2. **Edge Function**: Supabase → Edge Functions → nuova funzione `send-notifications` con il contenuto di `send-notifications.ts`. Disattiva **Verify JWT** (la funzione controlla da sola il segreto o il token admin).
-3. **Secrets** della funzione: `RESEND_API_KEY`, `MAIL_FROM` (es. `Marathonbet HR <hr@marathonbet.it>`), `NOTIFY_SECRET` (stringa lunga casuale), opzionali `PORTAL_URL`, `MAIL_REPLY_TO`, `NOTIFY_ADMINS`.
-4. **SQL Editor**: `select vault.create_secret('<stesso NOTIFY_SECRET>', 'notify_secret');` poi esegui `supabase_modules_notifications.sql`.
+3. **Secrets** della funzione: `RESEND_API_KEY`, `MAIL_FROM` (es. `Marathonbet HR <hr@marathonbet.it>`), opzionali `PORTAL_URL`, `MAIL_REPLY_TO`, `NOTIFY_ADMINS`.
+4. **SQL Editor**: esegui `supabase_modules_notifications.sql` (genera da solo il segreto condiviso nel Vault).
 5. Prova dalla scheda di un dipendente con **Invia email di prova**.
 
 ## Sicurezza

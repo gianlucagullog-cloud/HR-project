@@ -7,8 +7,8 @@
 //
 // Secrets richiesti (Edge Functions → Secrets):
 //   RESEND_API_KEY   chiave API di resend.com
-//   MAIL_FROM        es. "Marathonbet HR <hr@marathonbet.it>" (dominio verificato su Resend)
-//   NOTIFY_SECRET    stessa stringa salvata nel Vault come 'notify_secret'
+//   MAIL_FROM        es. "Marathonbet HR <hr@marathonbet.it>" (dominio verificato su Resend;
+//                    senza dominio verificato usa "onboarding@resend.dev", solo verso la tua email)
 //   PORTAL_URL       es. https://hrmarathon.vercel.app   (opzionale)
 //   NOTIFY_ADMINS    "false" per non avvisare gli admin delle nuove richieste (opzionale)
 //   MAIL_REPLY_TO    indirizzo per le risposte (opzionale)
@@ -246,8 +246,10 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
 
   // Autorizzazione: segreto condiviso (database / cron) oppure admin attivo (portale)
-  const secret = Deno.env.get("NOTIFY_SECRET");
-  const fromDb = Boolean(secret) && req.headers.get("x-notify-secret") === secret;
+  // Segreto condiviso: generato nel Vault da supabase_modules_notifications.sql
+  const sent = req.headers.get("x-notify-secret") || "";
+  const { data: okSecret } = sent ? await db.rpc("check_notify_secret", { s: sent }) : { data: false };
+  const fromDb = okSecret === true;
   let adminId: string | null = null;
   if (!fromDb) {
     const caller = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, {

@@ -7,10 +7,8 @@
 --    negata, modificata, revocata, eliminata + promemoria fattura mensile.
 --    L'invio lo fa la Edge Function "send-notifications" (vedi README).
 --
--- Prima di eseguire: crea il segreto condiviso con la Edge Function
--- (stesso valore del secret NOTIFY_SECRET della funzione):
---
---   select vault.create_secret('METTI-QUI-UNA-STRINGA-LUNGA-CASUALE', 'notify_secret');
+-- Il segreto condiviso database -> Edge Function viene generato qui
+-- (Vault, nome 'notify_secret'): non va copiato da nessuna parte.
 --
 -- Rieseguibile.
 -- =====================================================================
@@ -89,6 +87,27 @@ create policy "notification_log_admin_select"
 -- 3) Chiamata alla Edge Function (pg_net)
 -- ---------------------------------------------------------------------
 create extension if not exists pg_net;
+
+-- Segreto casuale nel Vault (creato solo la prima volta)
+do $$
+begin
+  if not exists (select 1 from vault.secrets where name = 'notify_secret') then
+    perform vault.create_secret(encode(extensions.gen_random_bytes(32), 'hex'), 'notify_secret');
+  end if;
+end $$;
+
+-- La Edge Function (service_role) verifica il segreto ricevuto
+create or replace function public.check_notify_secret(s text)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (select 1 from vault.decrypted_secrets where name = 'notify_secret' and decrypted_secret = s);
+$$;
+revoke execute on function public.check_notify_secret(text) from public, anon, authenticated;
+grant execute on function public.check_notify_secret(text) to service_role;
 
 create or replace function public.call_notify(payload jsonb)
 returns void
