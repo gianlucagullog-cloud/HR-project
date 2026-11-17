@@ -931,3 +931,48 @@ tbody tr:hover { background: rgba(15, 26, 46, 0.02); }
 .cred-dialog label { display: grid; gap: 4px; font-size: 0.9rem; font-weight: 600; }
 .cred-dialog input { font: inherit; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; }
 .cred-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* =================================================================
+   FUNZIONI PER UTENTE (fatturazione / rimborsi) E SOTTO-TAB SCHEDA
+================================================================= */
+body.no-invoicing .module-invoicing,
+body.no-expenses .module-expenses { display: none !important; }
+
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.sub-tab {
+  border: 0;
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sub-tab:hover { color: var(--ink); }
+.sub-tab.is-active { background: var(--surface, #fff); color: var(--ink); box-shadow: var(--shadow-sm); }
+.sub-tab.hidden { display: none; }
+[data-emp-pane] { display: grid; gap: 20px; }
+[data-emp-pane].hidden { display: none; }
+
+.module-toggles { display: grid; gap: 10px; }
+.check-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 500;
+}
+.check-row input[type="checkbox"] { width: auto; margin-top: 3px; }
+.check-row span { display: grid; gap: 2px; }
+#empForm .inv-field.hidden { display: none; }
+.module-actions { display: flex; gap: 8px; flex-wrap: wrap; }

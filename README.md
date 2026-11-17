@@ -69,6 +69,24 @@ Setup una tantum: esegui `supabase_payroll.sql` poi `supabase_validations.sql` e
 
 Setup: esegui `supabase_features.sql` e `supabase_expenses.sql` nel SQL Editor.
 
+## Fatture e rimborsi come funzioni per utente
+
+- Per il dipendente, **La mia scheda** mostra solo dati contrattuali e saldo ferie. Fatture (simulazione, dati di fatturazione, storico) e **Rimborsi spese** hanno ciascuno il proprio tab.
+- Nella scheda dipendente (admin) ci sono tre sotto-tab: **Scheda**, **Fatture**, **Rimborsi spese**.
+- In *Dati contrattuali → Funzioni attive per l'utente* l'admin attiva/disattiva per ogni persona: **Fatturazione**, **Rimborsi spese**, **Notifiche email**. Con la fatturazione disattivata spariscono il tab Fatture, i dati bancari/fatturazione nella scheda e la persona non conta nei totali fatture dell'elenco dipendenti.
+
+## Notifiche email
+
+Email automatiche al dipendente: richiesta ricevuta, approvata (anche parzialmente), non approvata, modificata, revocata, eliminata; promemoria fattura il 25 del mese e sollecito il 3 del mese successivo se la fattura non è validata. Gli admin ricevono un avviso per ogni nuova richiesta (disattivabile con `NOTIFY_ADMINS=false`). Ogni invio è registrato in `notification_log`.
+
+Setup una tantum:
+
+1. **Resend**: crea un account su resend.com, verifica il dominio mittente (record DNS) e crea una API key.
+2. **Edge Function**: Supabase → Edge Functions → nuova funzione `send-notifications` con il contenuto di `send-notifications.ts`. Disattiva **Verify JWT** (la funzione controlla da sola il segreto o il token admin).
+3. **Secrets** della funzione: `RESEND_API_KEY`, `MAIL_FROM` (es. `Marathonbet HR <hr@marathonbet.it>`), `NOTIFY_SECRET` (stringa lunga casuale), opzionali `PORTAL_URL`, `MAIL_REPLY_TO`, `NOTIFY_ADMINS`.
+4. **SQL Editor**: `select vault.create_secret('<stesso NOTIFY_SECRET>', 'notify_secret');` poi esegui `supabase_modules_notifications.sql`.
+5. Prova dalla scheda di un dipendente con **Invia email di prova**.
+
 ## Sicurezza
 
 Esegui `supabase_security.sql` nel SQL Editor: i dipendenti possono inserire solo richieste in attesa, annullare la validazione solo di fatture non ancora inviate e non possono cambiare la propria email.
@@ -93,6 +111,8 @@ Il repository è già collegato a Vercel. Ogni push su `main` fa il deploy.
 | `supabase_payroll.sql`| Tabelle schede dipendente / payslip + fix sicurezza profili |
 | `supabase_validations.sql`| Azzeramento ferie e validazione mesi fatturati |
 | `supabase_billing.sql`| Dati di fatturazione e tracciamento invio fatture |
+| `supabase_modules_notifications.sql`| Funzioni per utente, registro email, trigger e promemoria |
+| `send-notifications.ts`| Edge Function per le email (Resend) |
 | `.nojekyll`         | Evita che GitHub Pages processi i file |
 
 ## Flusso utente

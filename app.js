@@ -9,6 +9,8 @@ const SUPABASE_CONFIG = {
 };
 
 const DEFAULT_QUOTA = 33;
+// Viste del dipendente che usano i dati di "La mia scheda"
+const MY_VIEWS = ["mycard", "myinvoices", "myexpenses"];
 
 const state = {
   activeView: "history",
@@ -73,6 +75,9 @@ const refs = {
   roleSwitch: el("roleSwitch"),
   myCard: el("myCard"),
   myStatus: el("myStatus"),
+  myInvoices: el("myInvoices"),
+  myInvStatus: el("myInvStatus"),
+  myExpenses: el("myExpenses"),
   previewBanner: el("previewBanner"),
   previewExit: el("previewExit"),
   previewAs: el("previewAs"),
@@ -163,6 +168,9 @@ const refs = {
   empRateHint: el("empRateHint"),
   empQuota: el("empQuota"),
   empNotes: el("empNotes"),
+  empModInvoicing: el("empModInvoicing"),
+  empModExpenses: el("empModExpenses"),
+  empModEmail: el("empModEmail"),
   empBillingName: el("empBillingName"),
   empBillingEmail: el("empBillingEmail"),
   empBillingAddress: el("empBillingAddress"),
@@ -288,11 +296,11 @@ function bindEvents() {
     syncRoleUI();
     populateEmployeeOptions();
     render();
-    if (state.activeView === "mycard") loadMyCard();
+    if (MY_VIEWS.includes(state.activeView)) loadMyCard();
   });
 
-  // La mia scheda: scarica PDF di una fattura validata
-  refs.myCard.addEventListener("click", (e) => {
+  // Fatture (dipendente): scarica PDF di una fattura validata
+  refs.myInvoices.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-my-pdf]");
     if (btn) downloadMyInvoice(btn.dataset.myPdf, btn);
     const gen = e.target.closest("#myGenerate");
@@ -300,8 +308,8 @@ function bindEvents() {
     const undo = e.target.closest("[data-my-unvalidate]");
     if (undo) cancelMyValidation(undo);
   });
-  // La mia scheda: simulazione fattura (mese, numero, descrizione)
-  refs.myCard.addEventListener("input", (e) => {
+  // Fatture (dipendente): simulazione fattura (mese, numero, descrizione)
+  refs.myInvoices.addEventListener("input", (e) => {
     if (!state.profile) return;
     if (e.target.id === "myMonth") {
       if (!e.target.value) return;
@@ -321,7 +329,7 @@ function bindEvents() {
       state.activeView = button.dataset.viewTarget;
       if (state.activeView === "employees") openDirectory();
       if (state.activeView === "costs") renderCosts(true);
-      if (state.activeView === "mycard") loadMyCard();
+      if (MY_VIEWS.includes(state.activeView)) loadMyCard();
       syncViewUI();
     });
   });
@@ -536,7 +544,7 @@ function showApp() {
 async function loadProfile(userId) {
   const { data, error } = await supabaseClient
     .from("profiles")
-    .select("id, full_name, email, role, status, annual_quota")
+    .select("*")
     .eq("id", userId)
     .maybeSingle();
 
@@ -554,7 +562,13 @@ function normalizeProfile(profile) {
     email: profile.email,
     role: profile.role,
     status: profile.status || "active",
-    annualQuota: profile.annual_quota ?? DEFAULT_QUOTA
+    annualQuota: profile.annual_quota ?? DEFAULT_QUOTA,
+    // Funzioni attivabili per utente (colonne create da supabase_modules_notifications.sql;
+    // se non esistono ancora restano attive come prima)
+    invoicingEnabled: profile.invoicing_enabled !== false,
+    expensesEnabled: profile.expenses_enabled !== false,
+    emailNotifications: profile.email_notifications !== false,
+    modulesAvailable: "invoicing_enabled" in profile
   };
 }
 
@@ -614,7 +628,7 @@ async function refreshData() {
 async function fetchProfiles() {
   return supabaseClient
     .from("profiles")
-    .select("id, full_name, email, role, status, annual_quota")
+    .select("*")
     .order("full_name", { ascending: true });
 }
 
@@ -734,6 +748,7 @@ async function loadMyCard() {
   if (!supabaseClient || !state.profile) return;
   const me = viewerId();
   setStatus(refs.myStatus, "");
+  setStatus(refs.myInvStatus, "");
 
   if (state.profile.role !== "admin") {
     const [card, adj] = await Promise.all([
@@ -868,7 +883,7 @@ async function cancelMyValidation(btn) {
     .delete().eq("id", v.id).eq("employee_id", viewerId()).select("id");
   if (error || !data?.length) {
     btn.disabled = false;
-    return setStatus(refs.myStatus, error
+    return setStatus(refs.myInvStatus, error
       ? `Validazione non annullata: ${error.message}`
       : "Validazione non annullata: funzione non ancora attiva, contatta l'HR.", "error");
   }
@@ -881,20 +896,20 @@ async function cancelMyValidation(btn) {
     total: d.total_edited ? String(v.amount) : ""
   });
   await loadMyCard();
-  setStatus(refs.myStatus, `Validazione di ${monthName(ym)} annullata: ora puoi correggere i dati.`, "success");
+  setStatus(refs.myInvStatus, `Validazione di ${monthName(ym)} annullata: ora puoi correggere i dati.`, "success");
 }
 
 async function generateMyInvoice(btn) {
   const { me, pay, ym, v } = mySimData();
   if (!(Number(v.amount) > 0)) return;
   btn.disabled = true;
-  setStatus(refs.myStatus, "");
+  setStatus(refs.myInvStatus, "");
   try {
     const doc = await buildInvoicePdf({ employee: me, pay, v, ym });
     const surname = (pay.billingName || me.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
     doc.save(`${invoiceNumberOf(v, ym).replace(/[^\w.-]+/g, "_")}_${surname}.pdf`);
   } catch (err) {
-    setStatus(refs.myStatus, `PDF non generato: ${err.message}`, "error");
+    setStatus(refs.myInvStatus, `PDF non generato: ${err.message}`, "error");
   } finally {
     btn.disabled = false;
   }
@@ -914,8 +929,11 @@ function renderMyCard() {
   // Salario effettivamente generato nell'anno: somma delle fatture validate
   const generated = state.myValidations.filter((v) => v.month.startsWith(String(year)));
   const generatedTotal = generated.reduce((s, v) => s + Number(v.amount || 0), 0);
-  const generatedKpi = `<div><span class="metric-label">Generato ${year}</span><strong>${fmtEur(generatedTotal)}</strong>
+  let generatedKpi = `<div><span class="metric-label">Generato ${year}</span><strong>${fmtEur(generatedTotal)}</strong>
        <span class="metric-detail">${generated.length} ${generated.length === 1 ? "mese validato" : "mesi validati"}</span></div>`;
+  const invOn = viewerProfile().invoicingEnabled !== false;
+  const expOn = viewerProfile().expensesEnabled !== false;
+  if (!invOn) generatedKpi = "";
   const kpis = hasCard ? (fixed
     ? `<div><span class="metric-label">Salario annuo da contratto</span><strong>${pay.annualSalary ? fmtEur(pay.annualSalary) : "-"}</strong></div>
        ${generatedKpi}`
@@ -1021,8 +1039,7 @@ function renderMyCard() {
 
     ${hasCard ? "" : `<article class="card empty-state">La tua scheda contrattuale non è ancora stata compilata dall'HR.</article>`}
 
-    <div class="two-col">
-      <article class="card">
+    <article class="card">
         <div class="card-head"><h3>Saldo ferie <span class="muted">${year}</span></h3></div>
         <div class="leave-grid">
           <div class="metric-card"><span class="metric-label">Totale spettante</span><strong class="metric-value">${fmtDays(lb.total)} gg</strong>
@@ -1033,24 +1050,10 @@ function renderMyCard() {
         </div>
         <div class="progress-track"><div class="progress-bar" style="width:${pct}%"></div></div>
         <p class="metric-detail">Altre assenze approvate nell'anno: Permessi ${fmtDays(lb.permessi)} gg · Malattia ${fmtDays(lb.malattia)} gg</p>
-      </article>
+      </article>`;
 
-      <article class="card">
-        <div class="card-head"><h3>Dati di fatturazione</h3></div>
-        <dl class="my-dl">
-          <dt>Intestatario</dt><dd>${dash(pay.billingName || me.fullName)}</dd>
-          <dt>Indirizzo</dt><dd>${dash(pay.billingAddress)}</dd>
-          <dt>P.IVA / C.F.</dt><dd>${dash(pay.taxId)}</dd>
-          <dt>Email fatture</dt><dd>${dash(pay.billingEmail || me.email)}</dd>
-          <dt>Intestatario conto</dt><dd>${dash(pay.bankHolder || pay.billingName)}</dd>
-          <dt>Banca</dt><dd>${dash(pay.bankName)}</dd>
-          <dt>IBAN</dt><dd>${pay.iban ? escapeHtml(formatIban(pay.iban)) : `<span class="muted">-</span>`}</dd>
-          <dt>BIC / SWIFT</dt><dd>${dash(pay.bic)}</dd>
-        </dl>
-        <p class="metric-detail">Dati errati o mancanti? Scrivi all'HR per aggiornarli.</p>
-      </article>
-    </div>
-
+  if (refs.myInvoices) {
+    refs.myInvoices.innerHTML = invOn ? `
     <article class="card" id="mySimCard">
       <div class="card-head">
         <h3>Simula / genera fattura</h3>
@@ -1082,7 +1085,20 @@ function renderMyCard() {
       <div id="mySimBody"></div>
     </article>
 
-    ${expensesCardMarkup(me.id, state.myItems || [], state.profile.role === "admin")}
+      <article class="card">
+        <div class="card-head"><h3>Dati di fatturazione</h3></div>
+        <dl class="my-dl">
+          <dt>Intestatario</dt><dd>${dash(pay.billingName || me.fullName)}</dd>
+          <dt>Indirizzo</dt><dd>${dash(pay.billingAddress)}</dd>
+          <dt>P.IVA / C.F.</dt><dd>${dash(pay.taxId)}</dd>
+          <dt>Email fatture</dt><dd>${dash(pay.billingEmail || me.email)}</dd>
+          <dt>Intestatario conto</dt><dd>${dash(pay.bankHolder || pay.billingName)}</dd>
+          <dt>Banca</dt><dd>${dash(pay.bankName)}</dd>
+          <dt>IBAN</dt><dd>${pay.iban ? escapeHtml(formatIban(pay.iban)) : `<span class="muted">-</span>`}</dd>
+          <dt>BIC / SWIFT</dt><dd>${dash(pay.bic)}</dd>
+        </dl>
+        <p class="metric-detail">Dati errati o mancanti? Scrivi all'HR per aggiornarli.</p>
+      </article>
 
     <article class="card">
       <div class="card-head">
@@ -1090,7 +1106,13 @@ function renderMyCard() {
         <span class="muted">Totale ${year}: ${fmtEur(yearTotal)}</span>
       </div>
       ${invoices}
-    </article>`;
+    </article>` : `<article class="card empty-state">La fatturazione non è attiva per il tuo account.</article>`;
+  }
+  if (refs.myExpenses) {
+    refs.myExpenses.innerHTML = expOn
+      ? expensesCardMarkup(me.id, state.myItems || [], state.profile.role === "admin")
+      : `<article class="card empty-state">I rimborsi spese non sono attivi per il tuo account.</article>`;
+  }
   renderMySim();
 }
 
@@ -1106,7 +1128,7 @@ async function downloadMyInvoice(id, btn) {
     const surname = (pay.billingName || me.fullName).trim().split(/\s+/).pop().replace(/[^\w-]/g, "");
     doc.save(`${invoiceNumberOf(v, ym).replace(/[^\w.-]+/g, "_")}_${surname}.pdf`);
   } catch (err) {
-    setStatus(refs.myStatus, `PDF non generato: ${err.message}`, "error");
+    setStatus(refs.myInvStatus, `PDF non generato: ${err.message}`, "error");
   } finally {
     btn.disabled = false;
   }
@@ -1154,7 +1176,11 @@ function syncRoleUI() {
   }
   const allowed = role === "admin"
     ? ["dashboard", "approvals", "history", "team", "calendar", "costs", "employees", "users"]
-    : ["request", "mycard", "history"];
+    : ["request", "mycard", "history",
+       ...(viewerProfile().invoicingEnabled !== false ? ["myinvoices"] : []),
+       ...(viewerProfile().expensesEnabled !== false ? ["myexpenses"] : [])];
+  refs.body.classList.toggle("no-invoicing", role === "employee" && viewerProfile().invoicingEnabled === false);
+  refs.body.classList.toggle("no-expenses", role === "employee" && viewerProfile().expensesEnabled === false);
 
   if (role && !allowed.includes(state.activeView)) {
     state.activeView = role === "admin" ? "dashboard" : "request";
@@ -1187,7 +1213,7 @@ function render() {
   renderUsers();
   renderEmployeeSheet();
   renderQuotaChip();
-  if (state.activeView === "mycard") renderMyCard();
+  if (MY_VIEWS.includes(state.activeView)) renderMyCard();
   updateWorkingDaysPreview();
   updateBadges();
 }
@@ -3022,8 +3048,9 @@ function openDirectory() {
   loadDirectoryData();
 }
 
-async function openEmployee(id) {
+async function openEmployee(id, tab) {
   state.empMode = "detail";
+  state.empTab = tab || "profile";
   state.selectedEmployeeId = id;
   state.payItemsAll = [];
   state.validations = [];
@@ -3034,6 +3061,70 @@ async function openEmployee(id) {
   window.scrollTo({ top: 0, behavior: "smooth" });
   await loadPayItems();
 }
+
+// Sotto-tab della scheda dipendente (admin): Scheda / Fatture / Rimborsi spese
+function syncEmployeeTabs(employee) {
+  const inv = refs.empModInvoicing ? refs.empModInvoicing.checked : employee?.invoicingEnabled !== false;
+  const exp = employee?.expensesEnabled !== false;
+  const tabInv = document.getElementById("empTabInvoices");
+  const tabExp = document.getElementById("empTabExpenses");
+  tabInv?.classList.toggle("hidden", employee?.invoicingEnabled === false);
+  tabExp?.classList.toggle("hidden", !exp);
+  if ((state.empTab === "invoices" && employee?.invoicingEnabled === false) ||
+      (state.empTab === "expenses" && !exp)) state.empTab = "profile";
+  const tab = state.empTab || "profile";
+  document.querySelectorAll("[data-emp-tab]").forEach((b) => b.classList.toggle("is-active", b.dataset.empTab === tab));
+  document.querySelectorAll("[data-emp-pane]").forEach((p) => p.classList.toggle("hidden", p.dataset.empPane !== tab));
+  // I dati di fatturazione/bancari servono solo se la fatturazione è attiva
+  document.querySelectorAll("#empForm .inv-field, #empForm .module-inv-only").forEach((n) => n.classList.toggle("hidden", !inv));
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-emp-tab]");
+  if (!t) return;
+  state.empTab = t.dataset.empTab;
+  syncEmployeeTabs(getEmployeeById(state.selectedEmployeeId));
+});
+document.addEventListener("change", (e) => {
+  if (e.target.id === "empModInvoicing") syncEmployeeTabs(getEmployeeById(state.selectedEmployeeId));
+});
+
+// Notifiche email (Edge Function send-notifications)
+async function callNotifications(payload, btn) {
+  const status = refs.empStatus;
+  if (btn) btn.disabled = true;
+  setStatus(status, "Invio email…");
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("send-notifications", { body: payload });
+    if (error) {
+      let msg = error.message;
+      try { msg = (await error.context.json()).error || msg; } catch (_) { /* risposta non JSON */ }
+      throw new Error(/not found|404|Failed to send/i.test(msg)
+        ? "servizio email non ancora attivo: pubblica la Edge Function send-notifications (vedi README)"
+        : msg);
+    }
+    const list = data?.sent || (data?.status ? [data] : []);
+    const sent = list.filter((x) => x.status === "sent").length;
+    const err = list.find((x) => x.status === "error");
+    if (err) throw new Error(err.error);
+    setStatus(status, sent ? `Email inviata a ${list.filter((x) => x.status === "sent").map((x) => x.to).join(", ")}.`
+      : "Nessuna email da inviare (fattura già validata o promemoria già inviato).", "success");
+  } catch (e) {
+    setStatus(status, `Email non inviata: ${e.message}`, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.id === "empTestMail") {
+    callNotifications({ event: "test", employee_id: state.selectedEmployeeId }, e.target);
+  } else if (e.target.id === "empRemindInvoice") {
+    const emp = getEmployeeById(state.selectedEmployeeId);
+    if (!confirm(`Inviare a ${emp?.fullName || "questo dipendente"} il promemoria per la fattura di ${monthName(currentYm()).toLowerCase()}?`)) return;
+    callNotifications({ event: "invoice_reminder", mode: "upcoming", employee_ids: [state.selectedEmployeeId] }, e.target);
+  }
+});
 
 function syncEmployeeMode() {
   const list = state.empMode !== "detail";
@@ -3076,11 +3167,12 @@ function directoryRow(employee, ym, dir) {
 
   const missing = [
     !(pay.payType === "fixed" ? pay.annualSalary : pay.dailyRate) && "compenso",
-    !pay.iban && "IBAN",
+    employee.invoicingEnabled !== false && !pay.iban && "IBAN",
     !pay.contractStart && "inizio contratto"
   ].filter(Boolean);
 
-  return { employee, pay, lb, ps, v, missing, amount: v ? Number(v.amount) : ps.total };
+  const noInv = employee.invoicingEnabled === false;
+  return { employee, pay, lb, ps, v, missing, noInv, amount: noInv ? 0 : (v ? Number(v.amount) : ps.total) };
 }
 
 // Scostamento oltre il 5% tra importo modificato a mano e calcolo
@@ -3115,13 +3207,14 @@ function renderDirectory() {
   // Riepilogo
   const monthLabel = monthName(ym);
   const total = rows.reduce((s, r) => s + r.amount, 0);
-  const validated = rows.filter((r) => r.v).length;
-  const sent = rows.filter((r) => r.v?.sent_at).length;
+  const billable = rows.filter((r) => !r.noInv);
+  const validated = billable.filter((r) => r.v).length;
+  const sent = billable.filter((r) => r.v?.sent_at).length;
   const incomplete = rows.filter((r) => r.missing.length).length;
   refs.dirMetrics.innerHTML = [
     ["Dipendenti attivi", rows.length, `${depts.length} dipartiment${depts.length === 1 ? "o" : "i"}`],
     [`Fatture ${monthLabel.toLowerCase()}`, fmtEur(total), "validato o simulato"],
-    ["Validate", `${validated}/${rows.length}`, `${sent} inviate`],
+    ["Validate", `${validated}/${billable.length}`, `${sent} inviate`],
     ["Schede incomplete", incomplete, incomplete ? "mancano dati (vedi elenco)" : "tutto in ordine"]
   ].map(([label, value, sub]) => `
     <article class="metric-card">
@@ -3135,6 +3228,7 @@ function renderDirectory() {
 
   refs.dirBody.innerHTML = shown.length ? shown.map((r) => {
     const { employee, pay, lb, v, missing } = r;
+    const noInvBadge = r.noInv ? `<span class="badge neutral">Fatturazione off</span>` : "";
     const comp = pay.payType === "fixed"
       ? (pay.annualSalary ? `${fmtEur(pay.annualSalary)}<span class="dir-sub">fisso annuo</span>` : "-")
       : (pay.dailyRate ? `${fmtEur(pay.dailyRate)}<span class="dir-sub">al giorno</span>` : "-");
@@ -3156,9 +3250,9 @@ function renderDirectory() {
         <td>${escapeHtml(pay.jobTitle || "-")}<span class="dir-sub">${escapeHtml(pay.department || "Nessun dipartimento")}</span></td>
         <td class="num">${comp}</td>
         <td class="num ${lb.remaining < 0 ? "negative-text" : ""}">${fmtDays(lb.remaining)} gg<span class="dir-sub">su ${fmtDays(lb.total)}</span></td>
-        <td class="num">${fmtEur(r.amount)}<span class="dir-sub">${v ? "validato" : (r.ps.totalEdited || r.ps.daysEdited)
-          ? `modificato a mano · calcolato ${fmtEur(r.ps.computedTotal)}` : "simulato"}</span>${anomalyNote(r)}</td>
-        <td>${status}</td>
+        <td class="num">${r.noInv ? `<span class="muted">-</span>` : `${fmtEur(r.amount)}<span class="dir-sub">${v ? "validato" : (r.ps.totalEdited || r.ps.daysEdited)
+          ? `modificato a mano · calcolato ${fmtEur(r.ps.computedTotal)}` : "simulato"}</span>${anomalyNote(r)}`}</td>
+        <td>${noInvBadge || status}</td>
       </tr>`;
   }).join("") : `<tr><td colspan="6" class="empty-state">Nessun dipendente corrisponde ai filtri.</td></tr>`;
 }
@@ -3208,6 +3302,9 @@ function renderEmployeeSheet() {
     syncSalaryField();
     refs.empQuota.value = employee.annualQuota ?? DEFAULT_QUOTA;
     refs.empNotes.value = pay.notes;
+    if (refs.empModInvoicing) refs.empModInvoicing.checked = employee.invoicingEnabled !== false;
+    if (refs.empModExpenses) refs.empModExpenses.checked = employee.expensesEnabled !== false;
+    if (refs.empModEmail) refs.empModEmail.checked = employee.emailNotifications !== false;
     refs.empBillingName.value = pay.billingName;
     refs.empBillingEmail.value = pay.billingEmail;
     refs.empBillingEmail.placeholder = employee.email;
@@ -3253,6 +3350,7 @@ function renderEmployeeSheet() {
   refs.kpiSalary.textContent = pay.annualSalary ? fmtEur(pay.annualSalary) : "-";
   refs.kpiLeave.textContent = `${fmtDays(lb.remaining)} gg`;
 
+  syncEmployeeTabs(employee);
   renderPayslip(employee, pay);
   const box = document.getElementById("empExpenses");
   if (box) box.innerHTML = expensesCardMarkup(employee.id, state.payItemsAll, true);
@@ -3675,6 +3773,23 @@ async function saveEmployeeSheet(event) {
   if (Number.isFinite(quota) && quota !== employee.annualQuota) {
     const res = await supabaseClient.from("profiles").update({ annual_quota: quota }).eq("id", employee.id);
     if (res.error) return setStatus(refs.empStatus, res.error.message, "error");
+  }
+
+  // Funzioni attive per l'utente (fatturazione, rimborsi, notifiche email)
+  const mods = {
+    invoicing_enabled: Boolean(refs.empModInvoicing?.checked),
+    expenses_enabled: Boolean(refs.empModExpenses?.checked),
+    email_notifications: Boolean(refs.empModEmail?.checked)
+  };
+  if (mods.invoicing_enabled !== (employee.invoicingEnabled !== false) ||
+      mods.expenses_enabled !== (employee.expensesEnabled !== false) ||
+      mods.email_notifications !== (employee.emailNotifications !== false)) {
+    const res = await supabaseClient.from("profiles").update(mods).eq("id", employee.id);
+    if (res.error) {
+      return setStatus(refs.empStatus, /invoicing_enabled|expenses_enabled|email_notifications|column/i.test(res.error.message)
+        ? "Scheda salvata, ma le funzioni per utente non sono ancora attive: esegui supabase_modules_notifications.sql su Supabase."
+        : `Scheda salvata, ma funzioni utente non aggiornate: ${res.error.message}`, "error");
+    }
   }
 
   setStatus(refs.empStatus, "Scheda salvata.", "success");

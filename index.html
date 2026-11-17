@@ -111,6 +111,8 @@
           <button class="nav-item is-active admin-only" data-view-target="dashboard" type="button">Dashboard</button>
           <button class="nav-item employee-only" data-view-target="request" type="button">Nuova richiesta</button>
           <button class="nav-item employee-only" data-view-target="mycard" type="button">La mia scheda</button>
+          <button class="nav-item employee-only module-invoicing" data-view-target="myinvoices" type="button">Fatture</button>
+          <button class="nav-item employee-only module-expenses" data-view-target="myexpenses" type="button">Rimborsi spese</button>
           <button class="nav-item admin-only" data-view-target="approvals" type="button">Approvazioni <span class="badge-count hidden" id="pendingBadge">0</span></button>
           <button class="nav-item" data-view-target="history" type="button">Storico</button>
           <button class="nav-item admin-only" data-view-target="team" type="button">Team</button>
@@ -299,11 +301,34 @@
           <div class="page-head">
             <div>
               <h1>La mia scheda</h1>
-              <p class="muted">I tuoi dati contrattuali, il saldo ferie e le tue fatture. Per correggere qualcosa contatta l'HR.</p>
+              <p class="muted">I tuoi dati contrattuali e il saldo ferie. Per correggere qualcosa contatta l'HR.</p>
             </div>
           </div>
           <p class="status-message" id="myStatus"></p>
           <div id="myCard" class="emp-sheet"></div>
+        </section>
+
+        <!-- FATTURE (employee, se la fatturazione è attiva per l'utente) -->
+        <section class="view-panel employee-only" data-view="myinvoices">
+          <div class="page-head">
+            <div>
+              <h1>Fatture</h1>
+              <p class="muted">Simula e genera la fattura del mese, controlla i tuoi dati di fatturazione e lo storico.</p>
+            </div>
+          </div>
+          <p class="status-message" id="myInvStatus"></p>
+          <div id="myInvoices" class="emp-sheet"></div>
+        </section>
+
+        <!-- RIMBORSI SPESE (employee, se attivi per l'utente) -->
+        <section class="view-panel employee-only" data-view="myexpenses">
+          <div class="page-head">
+            <div>
+              <h1>Rimborsi spese</h1>
+              <p class="muted">Inserisci le spese sostenute: l'HR le rimborsa nella fattura del mese.</p>
+            </div>
+          </div>
+          <div id="myExpenses" class="emp-sheet"></div>
         </section>
 
         <section class="view-panel admin-only" data-view="team">
@@ -416,6 +441,13 @@
           <div id="empEmpty" class="card empty-state hidden">Nessun dipendente attivo.</div>
 
           <div id="empSheet" class="emp-sheet">
+            <div class="sub-tabs" id="empTabs" role="tablist">
+              <button type="button" class="sub-tab is-active" data-emp-tab="profile">Scheda</button>
+              <button type="button" class="sub-tab" data-emp-tab="invoices" id="empTabInvoices">Fatture</button>
+              <button type="button" class="sub-tab" data-emp-tab="expenses" id="empTabExpenses">Rimborsi spese</button>
+            </div>
+
+            <div data-emp-pane="profile">
             <article class="card emp-identity">
               <div>
                 <h2 id="empName">-</h2>
@@ -471,39 +503,50 @@
                     <textarea id="empNotes" rows="2"></textarea>
                   </label>
 
-                  <h4 class="form-section full-width">Dati di fatturazione</h4>
-                  <label>
+                  <h4 class="form-section full-width">Funzioni attive per l'utente</h4>
+                  <div class="full-width module-toggles">
+                    <label class="check-row"><input type="checkbox" id="empModInvoicing" /> <span><strong>Fatturazione</strong><small class="metric-detail">Tab "Fatture": simulazione, generazione PDF e storico fatture</small></span></label>
+                    <label class="check-row"><input type="checkbox" id="empModExpenses" /> <span><strong>Rimborsi spese</strong><small class="metric-detail">Tab "Rimborsi spese" per inserire le spese sostenute</small></span></label>
+                    <label class="check-row"><input type="checkbox" id="empModEmail" /> <span><strong>Notifiche email</strong><small class="metric-detail">Conferma richieste, approvazioni, rifiuti, modifiche e promemoria fattura</small></span></label>
+                    <div class="module-actions">
+                      <button type="button" class="ghost-button" id="empTestMail">Invia email di prova</button>
+                      <button type="button" class="ghost-button module-inv-only" id="empRemindInvoice">Invia promemoria fattura</button>
+                    </div>
+                  </div>
+
+                  <h4 class="form-section full-width inv-field">Dati di fatturazione</h4>
+                  <label class="inv-field">
                     <span>Nome e cognome (intestatario)</span>
                     <input type="text" id="empBillingName" autocomplete="off" />
                   </label>
-                  <label>
+                  <label class="inv-field">
                     <span>Email per le fatture</span>
                     <input type="email" id="empBillingEmail" autocomplete="off" />
                   </label>
-                  <label class="full-width">
+                  <label class="full-width inv-field">
                     <span>Indirizzo</span>
                     <textarea id="empBillingAddress" rows="2" placeholder="Via, numero civico, CAP, città, provincia, paese"></textarea>
                   </label>
-                  <label class="full-width">
+                  <label class="full-width inv-field">
                     <span>Partita IVA / Codice fiscale</span>
                     <input type="text" id="empTaxId" autocomplete="off" />
                   </label>
 
-                  <h4 class="form-section full-width">Dati bancari</h4>
-                  <label>
+                  <h4 class="form-section full-width inv-field">Dati bancari</h4>
+                  <label class="inv-field">
                     <span>Intestatario del conto</span>
                     <input type="text" id="empBankHolder" autocomplete="off" />
                   </label>
-                  <label>
+                  <label class="inv-field">
                     <span>Banca</span>
                     <input type="text" id="empBankName" autocomplete="off" />
                   </label>
-                  <label>
+                  <label class="inv-field">
                     <span>IBAN</span>
                     <input type="text" id="empIban" autocomplete="off" spellcheck="false" placeholder="IT60 X054 2811 1010 0000 0123 456" />
                     <small class="metric-detail" id="empIbanHint"></small>
                   </label>
-                  <label>
+                  <label class="inv-field">
                     <span>BIC / SWIFT</span>
                     <input type="text" id="empBic" autocomplete="off" spellcheck="false" />
                   </label>
@@ -535,8 +578,13 @@
               </article>
             </div>
 
-            <div id="empExpenses"></div>
+            </div>
 
+            <div data-emp-pane="expenses" class="hidden">
+              <div id="empExpenses"></div>
+            </div>
+
+            <div data-emp-pane="invoices" class="hidden">
             <article class="card" id="payslipCard">
               <div class="card-head">
                 <h3>Simulazione fattura mensile</h3>
@@ -630,6 +678,7 @@
               </div>
               <p class="metric-detail">Giorni lavorabili: lunedì-venerdì esclusi i festivi infrasettimanali. Giorni lavorati: quelli della fattura validata (~ stima per i mesi non validati). Puoi modificare a mano entrambi i valori: svuota il campo per tornare al valore calcolato. Il totale anno considera i mesi validati o con giorni lavorati inseriti a mano; nel 2026 la differenza tra lavorabili e lavorati è scalata dalle ferie. Clicca un mese per aprirne la simulazione.</p>
             </article>
+            </div>
           </div>
           </div>
         </section>
